@@ -1,0 +1,37 @@
+{
+  "name": "@kiosk/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "productName": "Kiosk Studio",
+  "description": "Kiosk Studio — build and run interactive touch experiences.",
+  "author": "Kiosk Studio",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/launch.mjs dev",
+    "build": "electron-vite build",
+    "preview": "node scripts/launch.mjs preview",
+    "smoke": "node scripts/smoke.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "package": "electron-vite build && node scripts/pack.mjs"
+  },
+  "dependencies": {
+    "@kiosk/connectors": "workspace:*",
+    "@kiosk/engine": "workspace:*",
+    "@kiosk/pptx": "workspace:*",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.0",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.3.1",
+    "electron-vite": "^2.3.0",
+    "playwright": "^1.60.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "kiosk-studio",
+  "version": "0.0.1",
+  "private": true,
+  "description": "An Intuiface-style no-code platform for building interactive touch kiosks.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --filter @kiosk/desktop dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
