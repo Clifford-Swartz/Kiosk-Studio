@@ -1,7 +1,33 @@
+import React, { useEffect, useRef } from "react";
 import type { Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importPickedImage } from "./assets.js";
+import { importPickedImage, importContentFile, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
+
+/**
+ * Debounce a value to reduce rapid history entries. The value updates
+ * immediately in local state but only commits to the store after a delay.
+ */
+function useDebouncedCallback<T extends (...args: any[]) => void>(
+  callback: T,
+  delay: number
+): T {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const callbackRef = useRef(callback);
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  return useRef((...args: Parameters<T>) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      callbackRef.current(...args);
+    }, delay);
+  }).current as T;
+}
 
 /**
  * Right panel: edit the selected element. Geometry (x/y/w/h/rotation/opacity)
@@ -17,21 +43,30 @@ export function PropertiesPanel() {
 
   const el = scene.elements.find((e) => e.id === selectedId) ?? null;
 
+  // IMPORTANT: Call all hooks BEFORE any conditional returns (Rules of Hooks)
+  // Debounce geometry changes to avoid creating history entry per keystroke
+  const debouncedNum = useDebouncedCallback(
+    (k: keyof Element, v: string) => {
+      if (el) {
+        updateElement(el.id, { [k]: Number(v) } as Partial<Element>);
+      }
+    },
+    300
+  );
+  const debouncedNumCb = (k: keyof Element) => (v: string) => debouncedNum(k, v);
+
   // No selection: show scene settings (size + background) instead.
   if (!el) return <SceneSettings />;
-
-  const num = (k: keyof Element) => (v: string) =>
-    updateElement(el.id, { [k]: Number(v) } as Partial<Element>);
 
   return (
     <div style={panel}>
       <div style={heading}>Properties · {el.type}</div>
 
-      <Row label="X"><Num value={el.x} onChange={num("x")} /></Row>
-      <Row label="Y"><Num value={el.y} onChange={num("y")} /></Row>
-      <Row label="W"><Num value={el.width} onChange={num("width")} /></Row>
-      <Row label="H"><Num value={el.height} onChange={num("height")} /></Row>
-      <Row label="Rotation"><Num value={el.rotation} onChange={num("rotation")} /></Row>
+      <Row label="X"><Num value={el.x} onChange={debouncedNumCb("x")} /></Row>
+      <Row label="Y"><Num value={el.y} onChange={debouncedNumCb("y")} /></Row>
+      <Row label="W"><Num value={el.width} onChange={debouncedNumCb("width")} /></Row>
+      <Row label="H"><Num value={el.height} onChange={debouncedNumCb("height")} /></Row>
+      <Row label="Rotation"><Num value={el.rotation} onChange={debouncedNumCb("rotation")} /></Row>
       <Row label="Opacity">
         <input
           type="range"
@@ -67,6 +102,7 @@ function TypeFields({
   updateProps: (id: string, props: Record<string, unknown>) => void;
 }) {
   const set = (k: string, v: unknown) => updateProps(el.id, { [k]: v });
+  const debouncedSet = useDebouncedCallback(set, 300);
   const p = el.props;
 
   switch (el.type) {
@@ -81,8 +117,28 @@ function TypeFields({
             />
           </Row>
           <BindControl elementId={el.id} targetProp="text" />
-          <Row label="Size"><Num value={n(p.fontSize, 32)} onChange={(v) => set("fontSize", Number(v))} /></Row>
+          <Row label="Size"><Num value={n(p.fontSize, 32)} onChange={(v) => debouncedSet("fontSize", Number(v))} /></Row>
           <Row label="Color"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
+          <Row label="Align">
+            <div style={{ display: "flex", gap: 4 }}>
+              {(["left", "center", "right"] as const).map((alignment) => (
+                <button
+                  key={alignment}
+                  onClick={() => set("align", alignment)}
+                  style={{
+                    ...input,
+                    flex: 1,
+                    cursor: "pointer",
+                    background: str(p.align, "left") === alignment ? "#2563eb" : "#161c26",
+                    color: str(p.align, "left") === alignment ? "#fff" : "#e2e8f0",
+                    border: str(p.align, "left") === alignment ? "1px solid #1d4ed8" : "1px solid #232c3a",
+                  }}
+                >
+                  {alignment.charAt(0).toUpperCase() + alignment.slice(1)}
+                </button>
+              ))}
+            </div>
+          </Row>
         </>
       );
     case "rectangle":
@@ -107,19 +163,106 @@ function TypeFields({
           <button
             style={chooseBtn}
             onClick={async () => {
-              const picked = await window.kiosk.pickImage();
-              if (!picked) return;
-              const rel = await importPickedImage(picked);
+              const filePath = useEditor.getState().filePath;
+              if (!filePath) {
+                alert("Save the project first.");
+                return;
+              }
+              const type = el.type === "image" ? "image" : "video";
+              const rel = await importContentFile(filePath, type);
               if (rel) set("src", rel);
             }}
           >
-            Choose image…
+            Choose {el.type}…
           </button>
           <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
             …or paste (Ctrl+V) / drag a file onto the canvas.
           </div>
           <Row label="Source">
+            <input
+              type="text"
+              value={str(p.src) === "__placeholder__" ? "" : str(p.src)}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                // If cleared, revert to placeholder for images (not videos)
+                set("src", val === "" && el.type === "image" ? "__placeholder__" : val);
+              }}
+              placeholder={el.type === "image" ? "Using default placeholder" : ""}
+              style={input}
+            />
+          </Row>
+          {el.type === "image" && str(p.src) !== "" && str(p.src) !== "__placeholder__" && (
+            <button
+              style={{ ...chooseBtn, marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+              onClick={() => set("src", "__placeholder__")}
+            >
+              Reset to placeholder
+            </button>
+          )}
+        </>
+      );
+    case "audio":
+      return (
+        <>
+          <button
+            style={chooseBtn}
+            onClick={async () => {
+              const filePath = useEditor.getState().filePath;
+              if (!filePath) {
+                alert("Save the project first.");
+                return;
+              }
+              const rel = await importContentFile(filePath, "audio");
+              if (rel) {
+                const validation = validateAudioFile(rel);
+                if (!validation.valid) {
+                  alert(`Audio validation failed: ${validation.error}`);
+                  return;
+                }
+                set("src", rel);
+              }
+            }}
+          >
+            Choose audio…
+          </button>
+          <Row label="Source">
             <Text value={str(p.src)} onChange={(v) => set("src", v)} />
+          </Row>
+          <BindControl elementId={el.id} targetProp="props.src" />
+          <Row label="Volume">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={n(p.volume, 1)}
+              onChange={(e) => set("volume", Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </Row>
+          <Row label="Fade (ms)">
+            <Num value={n(p.fade, 0)} onChange={(v) => set("fade", Math.max(0, Number(v)))} />
+          </Row>
+          <Row label="Autoplay">
+            <input
+              type="checkbox"
+              checked={bool(p.autoplay, false)}
+              onChange={(e) => set("autoplay", e.target.checked)}
+            />
+          </Row>
+          <Row label="Loop">
+            <input
+              type="checkbox"
+              checked={bool(p.loop, false)}
+              onChange={(e) => set("loop", e.target.checked)}
+            />
+          </Row>
+          <Row label="Muted">
+            <input
+              type="checkbox"
+              checked={bool(p.muted, false)}
+              onChange={(e) => set("muted", e.target.checked)}
+            />
           </Row>
         </>
       );
@@ -249,7 +392,7 @@ function CollectionFields({
         <Row label="Gap"><Num value={n(p.gap, 16)} onChange={(v) => set("gap", Number(v))} /></Row>
       )}
       {layout === "kenburns" && (
-        <Row label="Interval"><Num value={n(p.intervalMs, 4000)} onChange={(v) => set("intervalMs", Number(v))} /></Row>
+        <Row label="Interval (ms)"><Num value={n(p.intervalMs, 4000)} onChange={(v) => set("intervalMs", Number(v))} /></Row>
       )}
       <Row label="Item bg"><Color value={str(p.itemBg, "#1e293b")} onChange={(v) => set("itemBg", v)} /></Row>
 
@@ -376,6 +519,9 @@ function str(v: unknown, fallback = ""): string {
 }
 function n(v: unknown, fallback: number): number {
   return typeof v === "number" ? v : fallback;
+}
+function bool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
 }
 
 const panel: React.CSSProperties = {

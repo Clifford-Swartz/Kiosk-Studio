@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { ElementRenderer, resolveBindings, useBindingValues, type Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importImageBlob, projectAssetBase } from "./assets.js";
+import { importImageBlob, projectAssetBase, importImageFromPath } from "./assets.js";
 import { collectTargets, snapMove, snapResize, type GuideLine, type SnapTargets } from "./snap.js";
 
 /** On-screen snap threshold in px; converted to scene units via the scale. */
@@ -53,7 +53,14 @@ function textPropFor(type: string): "text" | "label" {
   return type === "button" ? "label" : "text";
 }
 
-export function Canvas() {
+export function Canvas({
+  pauseCapture,
+  resumeCapture
+}: {
+  pauseCapture: () => void;
+  resumeCapture: () => void;
+}) {
+
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
   const selectElement = useEditor((s) => s.selectElement);
@@ -138,7 +145,16 @@ export function Canvas() {
     if (!file) return;
     e.preventDefault();
     const pos = clientToScene(e.clientX, e.clientY);
-    const rel = await importImageBlob(file, file.name || "dropped.png");
+
+    let rel: string | null = null;
+    // If file has a path (from filesystem drag-drop), copy it to user-content.
+    if ("path" in file && file.path) {
+      rel = await importImageFromPath(file.path);
+    } else {
+      // Otherwise, import from blob (clipboard or web source).
+      rel = await importImageBlob(file, file.name || "dropped.png");
+    }
+
     if (rel) addImageElement(rel, pos);
   }
 
@@ -185,11 +201,16 @@ export function Canvas() {
   }).current;
 
   const endDrag = useRef(() => {
-    drag.current = null;
-    dragTargets.current = null;
-    setGuides([]);
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", endDrag);
+    try {
+      drag.current = null;
+      dragTargets.current = null;
+      setGuides([]);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", endDrag);
+    } finally {
+      // ALWAYS resume capture, even if exception occurs above
+      resumeCapture(); // Resume history tracking and capture final position
+    }
   }).current;
 
   /** Snap targets from every element EXCEPT the one being dragged, + canvas. */
@@ -200,6 +221,7 @@ export function Canvas() {
   function beginMove(e: ReactPointerEvent, el: Element) {
     e.stopPropagation();
     selectElement(el.id);
+    pauseCapture(); // Pause history tracking during drag
     drag.current = {
       kind: "move",
       id: el.id,
@@ -217,6 +239,7 @@ export function Canvas() {
 
   function beginResize(e: ReactPointerEvent, el: Element, handle: Handle) {
     e.stopPropagation();
+    pauseCapture(); // Pause history tracking during resize
     drag.current = {
       kind: "resize",
       id: el.id,

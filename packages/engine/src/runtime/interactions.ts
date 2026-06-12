@@ -9,6 +9,7 @@ export interface PlayerContext {
   goToScene: (sceneId: string) => void;
   setProp: (elementId: string, key: string, value: unknown) => void;
   toggleVisibility: (elementId: string) => void;
+  playAudio: (elementId: string) => void;
   project: Project;
 }
 
@@ -54,8 +55,18 @@ function runAction(action: Action, ctx: PlayerContext): void {
       return;
     }
 
+    case "playMedia": {
+      // params: { target: elementId } — plays audio on the target element.
+      const target = action.params.target;
+      if (typeof target === "string") {
+        ctx.playAudio(target);
+      } else {
+        warn("playMedia action needs string params.target");
+      }
+      return;
+    }
+
     // Implemented in later milestones.
-    case "playMedia":
     case "sendData":
     case "animate":
       warn(`action '${action.type}' is not implemented yet`);

@@ -21,6 +21,7 @@ export const ElementTypeSchema = z.enum([
   "text",
   "image",
   "video",
+  "audio",
   "button",
   "group",
   "collection",

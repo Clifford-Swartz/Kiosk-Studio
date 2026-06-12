@@ -24,17 +24,22 @@ const TYPE_DEFAULTS: Record<
   text: {
     width: 480,
     height: 80,
-    props: { text: "Text", color: "#ffffff", fontSize: 40 },
+    props: { text: "Text", color: "#ffffff", fontSize: 40, align: "left" },
   },
   image: {
     width: 320,
     height: 240,
-    props: { src: "", fit: "cover", alt: "" },
+    props: { src: "__placeholder__", fit: "cover", alt: "" },
   },
   video: {
     width: 480,
     height: 270,
     props: { src: "", fit: "cover", autoplay: true, loop: true, muted: true },
+  },
+  audio: {
+    width: 60,
+    height: 60,
+    props: { src: "", volume: 1, fade: 0, autoplay: false, loop: false, muted: false },
   },
   button: {
     width: 280,
