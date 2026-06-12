@@ -20,15 +20,8 @@ export function useUndoRedo() {
   const loadProject = useEditor((s) => s.loadProject);
   const prevSceneRef = useRef(activeSceneId);
 
-  // Log only on mount, not on every render
-  useEffect(() => {
-    console.log('[useUndoRedo] mounted - should only see this once');
-  }, []);
-
   // Shared function to add a snapshot to history (used by both the effect and resumeCapture)
   const captureSnapshot = useCallback((snapshot: Project) => {
-    console.log('[useUndoRedo] Capturing snapshot to history');
-
     // Truncate any redo history if we've branched
     history.current = history.current.slice(0, historyIndex.current + 1);
 
@@ -49,18 +42,14 @@ export function useUndoRedo() {
 
   // Track project changes and add to history
   useEffect(() => {
-    console.log('[useUndoRedo] History effect triggered - skipTracking:', skipTrackingRef.current, 'isCapturing:', isCapturingRef.current);
-
     // Skip if undo/redo just restored a state
     if (skipTrackingRef.current) {
       skipTrackingRef.current = false;
-      console.log('[useUndoRedo] Skipping - just restored state');
       return;
     }
 
     // Skip if history capture is paused (e.g., during drag operations)
     if (!isCapturingRef.current) {
-      console.log('[useUndoRedo] Skipping capture - paused');
       return;
     }
 
@@ -92,8 +81,6 @@ export function useUndoRedo() {
     if (!shouldCapture) {
       return;
     }
-
-    console.log('[useUndoRedo] Capturing history - isCapturingRef:', isCapturingRef.current, 'refChanged:', current !== project, 'timeSince:', timeSinceLastCapture);
 
     captureSnapshot(project);
   }, [project, activeSceneId, captureSnapshot]);
@@ -157,21 +144,18 @@ export function useUndoRedo() {
   }, []);
 
   const pauseCapture = useCallback(() => {
-    console.log('[useUndoRedo] pauseCapture called');
     isCapturingRef.current = false;
 
     // Auto-resume after 5 seconds as failsafe to prevent stuck paused state
     clearTimeout(captureTimeoutRef.current);
     captureTimeoutRef.current = setTimeout(() => {
       if (!isCapturingRef.current) {
-        console.warn('[useUndoRedo] Auto-resuming capture after timeout (possible interrupted drag)');
         isCapturingRef.current = true;
       }
     }, 5000);
   }, []);
 
   const resumeCapture = useCallback(() => {
-    console.log('[useUndoRedo] resumeCapture called');
     clearTimeout(captureTimeoutRef.current);
     isCapturingRef.current = true;
 
