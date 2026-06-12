@@ -20,7 +20,7 @@ const cmd = process.platform === "win32" ? "npx.cmd" : "npx";
 const child = spawn(cmd, ["electron-vite", sub], {
   stdio: "inherit",
   env,
-  shell: false,
+  shell: true,
 });
 
 child.on("exit", (code, signal) => {

@@ -34,11 +34,22 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
     [project, activeSceneId]
   );
 
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+
   const ctx: PlayerContext = useMemo(
     () => ({
       goToScene: (sceneId) => setActiveSceneId(sceneId),
       setProp: (elementId, key, value) => overrideStore.setOverride(elementId, key, value),
       toggleVisibility: (elementId) => overrideStore.toggle(elementId, "__hidden"),
+      playAudio: (elementId) => {
+        const audio = audioElementsRef.current.get(elementId);
+        if (audio) {
+          audio.currentTime = 0;
+          audio.play().catch(() => {
+            // Autoplay may be blocked by browser; fail silently
+          });
+        }
+      },
       project,
     }),
     [project]
@@ -88,6 +99,13 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
               onTap={handleTap}
               assetBaseUrl={assetBaseUrl}
               playing
+              onAudioRef={(elementId, ref) => {
+                if (ref) {
+                  audioElementsRef.current.set(elementId, ref);
+                } else {
+                  audioElementsRef.current.delete(elementId);
+                }
+              }}
             />
           );
         })}

@@ -62,6 +62,19 @@ export async function importImageBlob(blob: Blob, suggestedName: string): Promis
 }
 
 /**
+ * Import content (image, video, or audio) from the user-content folder or copy
+ * from an external location. Returns the relative path to the file, or null if canceled.
+ */
+export async function importContentFile(
+  projectPath: string,
+  type: "image" | "video" | "audio"
+): Promise<string | null> {
+  const picked = await window.kiosk.pickContent(projectPath, type);
+  if (!picked) return null;
+  return picked.path;
+}
+
+/**
  * Persist an image chosen via the native picker (already base64) into assets/.
  * Returns the relative path, or null if canceled.
  */
@@ -71,4 +84,30 @@ export async function importPickedImage(
   const projectPath = await ensureProjectSaved();
   if (!projectPath) return null;
   return window.kiosk.saveAsset(projectPath, picked.name, picked.base64);
+}
+
+/**
+ * Import an image from a file path. If the file is outside the user-content folder,
+ * it will be copied there automatically. Returns the relative path, or null if
+ * the project is not saved.
+ */
+export async function importImageFromPath(filePath: string): Promise<string | null> {
+  const projectPath = await ensureProjectSaved();
+  if (!projectPath) return null;
+  return window.kiosk.copyExternalFile(projectPath, filePath);
+}
+
+/**
+ * Validate an audio file based on extension. Returns { valid: true } if ok,
+ * or { valid: false, error: string } if validation fails.
+ */
+export function validateAudioFile(filePath: string): { valid: true } | { valid: false; error: string } {
+  const ext = filePath.toLowerCase().split(".").pop() || "";
+  const supportedExts = ["mp3", "wav", "ogg", "m4a", "flac"];
+
+  if (!supportedExts.includes(ext)) {
+    return { valid: false, error: `Unsupported format (.${ext}). Supported: ${supportedExts.join(", ")}` };
+  }
+
+  return { valid: true };
 }

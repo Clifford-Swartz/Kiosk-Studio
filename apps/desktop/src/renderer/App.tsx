@@ -56,6 +56,16 @@ export function App() {
         const text = await window.kiosk.loadProject(path);
         const parsed = parseProject(JSON.parse(text));
         if (cancelled) return;
+
+        // Restore placeholders for empty image sources
+        for (const scene of parsed.scenes) {
+          for (const element of scene.elements) {
+            if (element.type === "image" && (!element.props.src || element.props.src === "")) {
+              element.props.src = "__placeholder__";
+            }
+          }
+        }
+
         loadProject(parsed, info.kiosk ? path ?? null : null);
         if (info.kiosk) {
           setLaunchedKiosk(true);
@@ -72,7 +82,18 @@ export function App() {
 
   async function handleSave() {
     try {
-      const text = JSON.stringify(project, null, 2);
+      // Clone project and strip sentinel values before saving
+      const normalized = JSON.parse(JSON.stringify(project));
+
+      for (const scene of normalized.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && element.props.src === "__placeholder__") {
+            element.props.src = ""; // Save as empty, not sentinel
+          }
+        }
+      }
+
+      const text = JSON.stringify(normalized, null, 2);
       const path = await window.kiosk.saveProject(text, filePath ?? undefined);
       if (path) markSaved(path);
     } catch (err) {
@@ -86,6 +107,16 @@ export function App() {
       if (!path) return;
       const text = await window.kiosk.loadProject(path);
       const parsed = parseProject(JSON.parse(text));
+
+      // After parseProject, restore placeholders for empty image sources
+      for (const scene of parsed.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && (!element.props.src || element.props.src === "")) {
+            element.props.src = "__placeholder__";
+          }
+        }
+      }
+
       loadProject(parsed, path);
     } catch (err) {
       window.alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -110,6 +141,13 @@ export function App() {
   }
 
   async function exitKiosk() {
+    // Stop all audio elements before exiting kiosk mode
+    const audios = document.querySelectorAll("audio");
+    audios.forEach((audio) => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+
     if (launchedKiosk) {
       // Launched via --kiosk: actually quit the kiosk.
       void window.kiosk.exitKiosk();
@@ -140,10 +178,21 @@ export function App() {
     } catch (err) {
       return <Centered text={`Invalid project:\n${String(err)}`} error />;
     }
+
+    const handleExitPlayer = () => {
+      // Stop all audio elements before switching back to editor
+      const audios = document.querySelectorAll("audio");
+      audios.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+      setMode("editor");
+    };
+
     return (
       <div style={{ position: "absolute", inset: 0 }}>
         <Player project={validated} assetBaseUrl={projectAssetBase(filePath)} />
-        <button onClick={() => setMode("editor")} style={backToEditor}>
+        <button onClick={handleExitPlayer} style={backToEditor}>
           ✕ Exit preview
         </button>
       </div>

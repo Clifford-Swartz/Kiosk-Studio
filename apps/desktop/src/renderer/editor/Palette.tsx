@@ -6,6 +6,7 @@ const ITEMS: { type: ElementType; label: string; icon: string }[] = [
   { type: "rectangle", label: "Rectangle", icon: "▭" },
   { type: "text", label: "Text", icon: "T" },
   { type: "image", label: "Image", icon: "🖼" },
+  { type: "audio", label: "Audio", icon: "🔊" },
   { type: "button", label: "Button", icon: "⬭" },
   { type: "collection", label: "Collection", icon: "▦" },
 ];

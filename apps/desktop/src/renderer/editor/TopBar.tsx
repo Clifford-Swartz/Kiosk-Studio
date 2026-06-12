@@ -8,13 +8,18 @@ import { useEditor } from "./store.js";
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
+export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef, redoRef, canUndo, canRedo }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
+  undoRef: React.MutableRefObject<() => void>;
+  redoRef: React.MutableRefObject<() => void>;
+  canUndo: boolean;
+  canRedo: boolean;
 }) {
+
   const project = useEditor((s) => s.project);
   const activeSceneId = useEditor((s) => s.activeSceneId);
   const dirty = useEditor((s) => s.dirty);
@@ -104,6 +109,22 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
       >
         Snap: {snapEnabled ? "On" : "Off"}
       </button>
+      <button
+        style={{ ...btn, ...(canUndo ? {} : disabledBtn) }}
+        onClick={() => undoRef.current()}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+      >
+        ↶ Undo
+      </button>
+      <button
+        style={{ ...btn, ...(canRedo ? {} : disabledBtn) }}
+        onClick={() => redoRef.current()}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Y)"
+      >
+        ↷ Redo
+      </button>
       <button style={btn} onClick={onOpen}>Open…</button>
       <button style={btn} onClick={onImportPptx} title="Import a PowerPoint as scenes">Import PPTX…</button>
       <button style={btn} onClick={onSave}>Save</button>
@@ -150,4 +171,8 @@ const select: React.CSSProperties = {
   fontSize: 13,
   padding: "6px 8px",
   minWidth: 140,
+};
+const disabledBtn: React.CSSProperties = {
+  opacity: 0.5,
+  cursor: "not-allowed",
 };

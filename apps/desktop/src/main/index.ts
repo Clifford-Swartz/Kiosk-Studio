@@ -4,7 +4,7 @@ import { parsePptx } from "@kiosk/pptx";
 import { appendFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -14,8 +14,11 @@ import { pathToFileURL } from "node:url";
  * dev and production. URL shape: kioskasset://load/<uri-encoded-abs-path>.
  */
 const ASSET_SCHEME = "kioskasset";
+const BUNDLED_SCHEME = "app";
+
 protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_SCHEME, privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true } },
+  { scheme: BUNDLED_SCHEME, privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true } },
 ]);
 
 // Bundled as CommonJS (see electron.vite.config.ts), so __dirname is the
@@ -108,13 +111,18 @@ function createWindow(): void {
 /**
  * Load and return the raw JSON text of a project file. If no path is given,
  * loads the bundled example. Validation happens in the renderer via the
- * engine's Zod schema, so the contract lives in one place.
+ * engine's Zod schema, so the contract lives in one place. Silently ensures
+ * the user-content folder exists for the project.
  */
 async function loadProject(_e: unknown, projectPath?: string): Promise<string> {
   const path = projectPath ?? defaultProjectPath();
   const text = await readFile(path, "utf8");
   // Touch pathToFileURL so asset-relative resolution can be added later.
   void pathToFileURL(path);
+  // Ensure user-content folder exists for this project.
+  await ensureUserContentFolder(path).catch(() => {
+    /* best effort; if it fails, the user will get an error when trying to add content */
+  });
   return text;
 }
 
@@ -178,6 +186,68 @@ async function saveProject(
   return path;
 }
 
+/** Get the absolute path to the user-content folder for a project. */
+function getUserContentFolderPath(projectPath: string): string {
+  return join(dirname(projectPath), "user-content");
+}
+
+/** Ensure the user-content folder exists. */
+async function ensureUserContentFolder(projectPath: string): Promise<string> {
+  const dir = getUserContentFolderPath(projectPath);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** Check if a file path is inside the user-content folder. */
+function isFileInUserContentFolder(filePath: string, projectPath: string): boolean {
+  const resolved = resolve(filePath);
+  const contentDir = resolve(getUserContentFolderPath(projectPath));
+  return resolved.startsWith(contentDir + sep);
+}
+
+/**
+ * Copy a file to the user-content folder, preserving the original filename.
+ * If a file with that name already exists, appends _1, _2, etc. to the filename.
+ * Returns the relative path (e.g., "user-content/image.jpg").
+ */
+async function copyToUserContent(
+  projectPath: string,
+  sourcePath: string
+): Promise<string> {
+  const contentDir = await ensureUserContentFolder(projectPath);
+  const fileName = basename(sourcePath);
+
+  let targetPath = join(contentDir, fileName);
+  let finalName = fileName;
+
+  // Deduplicate: if file exists, append _1, _2, etc.
+  if (await fileExists(targetPath)) {
+    const ext = extname(fileName);
+    const base = fileName.slice(0, -ext.length);
+    let i = 1;
+    while (await fileExists(join(contentDir, `${base}_${i}${ext}`))) {
+      i++;
+    }
+    finalName = `${base}_${i}${ext}`;
+    targetPath = join(contentDir, finalName);
+  }
+
+  const buf = await readFile(sourcePath);
+  await writeFile(targetPath, buf);
+
+  return `user-content/${finalName}`;
+}
+
+/** Check if a file exists without throwing. */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path, { flag: "r" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Normalize an extension from a filename, defaulting to .png. */
 function imageExt(name: string): string {
   const ext = extname(name).toLowerCase();
@@ -202,6 +272,60 @@ async function saveAsset(
   const name = `img-${randomBytes(4).toString("hex")}${imageExt(suggestedName)}`;
   await writeFile(join(assetsDir, name), Buffer.from(base64, "base64"));
   return `assets/${name}`;
+}
+
+/**
+ * Show a content picker dialog (image, video, or audio) defaulting to the
+ * project's user-content folder. Returns the chosen file's name and relative path,
+ * or null if canceled. If the file is outside the user-content folder, copies it in first.
+ */
+async function pickContent(
+  _e: unknown,
+  projectPath: string,
+  type: "image" | "video" | "audio"
+): Promise<{ name: string; path: string } | null> {
+  const filterMap: Record<string, string[]> = {
+    image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
+    video: ["mp4", "webm"],
+    audio: ["mp3", "wav", "ogg"],
+  };
+
+  const contentDir = getUserContentFolderPath(projectPath);
+  const result = await dialog.showOpenDialog({
+    title: `Choose ${type}`,
+    defaultPath: contentDir,
+    properties: ["openFile"],
+    filters: [{ name: type.charAt(0).toUpperCase() + type.slice(1), extensions: filterMap[type]! }],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const filePath = result.filePaths[0]!;
+  const fileName = basename(filePath);
+
+  // If file is already in the user-content folder, use it directly.
+  if (isFileInUserContentFolder(filePath, projectPath)) {
+    return { name: fileName, path: `user-content/${fileName}` };
+  }
+
+  // Otherwise, copy it to user-content folder.
+  const relativePath = await copyToUserContent(projectPath, filePath);
+  return { name: fileName, path: relativePath };
+}
+
+/**
+ * Copy an external file to the user-content folder, preserving its original filename.
+ * Returns the relative path (e.g., "user-content/image.jpg").
+ */
+async function copyExternalFile(
+  _e: unknown,
+  projectPath: string,
+  externalFilePath: string
+): Promise<string> {
+  if (isFileInUserContentFolder(externalFilePath, projectPath)) {
+    return `user-content/${basename(externalFilePath)}`;
+  }
+  return copyToUserContent(projectPath, externalFilePath);
 }
 
 /**
@@ -298,12 +422,36 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(absPath).toString());
   });
 
+  // app:// scheme serves bundled resources (audio-icon.png, placeholder.png, etc.)
+  protocol.handle(BUNDLED_SCHEME, (request) => {
+    const url = new URL(request.url);
+    const filename = url.pathname.replace(/^\/+/, ""); // e.g., "placeholder.png"
+
+    // In production: process.resourcesPath/filename
+    // In dev: __dirname/../resources/filename
+    const basePath = app.isPackaged
+      ? join(process.resourcesPath, filename)
+      : join(__dirname, "../../resources", filename);
+
+    const absPath = normalize(basePath);
+
+    // Security: ensure path stays within resources folder
+    const resourcesDir = app.isPackaged ? process.resourcesPath : normalize(join(__dirname, "../../resources"));
+    if (!absPath.startsWith(resourcesDir)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    return net.fetch(pathToFileURL(absPath).toString());
+  });
+
   ipcMain.handle("project:load", loadProject);
   ipcMain.handle("project:pick", pickProject);
   ipcMain.handle("project:save", saveProject);
   ipcMain.handle("project:ensureWorkspace", ensureWorkspace);
   ipcMain.handle("assets:save", saveAsset);
   ipcMain.handle("assets:pick", pickImage);
+  ipcMain.handle("content:pick", pickContent);
+  ipcMain.handle("content:copyExternal", copyExternalFile);
   ipcMain.handle("pptx:import", importPptx);
   ipcMain.handle("data:start", startData);
   ipcMain.handle("data:stop", stopData);

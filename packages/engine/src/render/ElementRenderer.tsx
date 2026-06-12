@@ -13,16 +13,37 @@ export interface ElementRendererProps {
   assetBaseUrl?: string;
   /** True in the Player; enables time-based behavior (e.g. Ken Burns auto-advance). */
   playing?: boolean;
+  /** Callback to register audio elements by ID for playback control. */
+  onAudioRef?: (elementId: string, ref: HTMLAudioElement | null) => void;
 }
+
+// Embedded fallback: 1×1 transparent PNG data URI (for empty src fields)
+const FALLBACK_DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+// Embedded placeholder: gray rectangle with "Image" text as SVG
+const PLACEHOLDER_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='240' viewBox='0 0 320 240'%3E%3Crect width='320' height='240' fill='%2334495e'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='system-ui' font-size='24' fill='%2395a5a6'%3EImage%3C/text%3E%3C/svg%3E";
 
 /**
  * Resolve an asset `src`. Absolute URLs (http/https/data/blob/file) and
  * protocol-relative URLs pass through unchanged; a relative path is joined to
  * `base` if provided (so saved projects can keep portable relative paths).
+ *
+ * Special handling:
+ * - Empty string → transparent fallback (invisible but won't break layout)
+ * - "__placeholder__" sentinel → bundled placeholder image
  */
 export function resolveSrc(src: string, base?: string): string {
-  if (!src) return src;
+  if (!src) return FALLBACK_DATA_URI;
+
+  // Sentinel value → bundled placeholder
+  if (src === "__placeholder__") {
+    return "app://placeholder.png";
+  }
+
+  // Absolute URLs pass through
   if (/^([a-z]+:)?\/\//i.test(src) || src.startsWith("data:")) return src;
+
+  // Relative paths → join with base
   if (!base) return src;
   return base.endsWith("/") ? base + src : `${base}/${src}`;
 }
@@ -32,7 +53,7 @@ export function resolveSrc(src: string, base?: string): string {
  * CSS transforms. This is the shared rendering primitive used by both the
  * Player and (later) the Editor canvas.
  */
-export function ElementRenderer({ element, onTap, assetBaseUrl, playing }: ElementRendererProps) {
+export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudioRef }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
@@ -92,6 +113,14 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing }: Eleme
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
           }}
           onClick={handleClick}
+          onError={(e) => {
+            // If bundled placeholder fails to load, fall back to embedded SVG
+            const target = e.currentTarget;
+            if (target.src.startsWith("app://placeholder")) {
+              target.src = PLACEHOLDER_FALLBACK;
+              console.warn("Bundled placeholder failed to load, using embedded SVG fallback");
+            }
+          }}
         />
       );
 
@@ -108,6 +137,18 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing }: Eleme
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
           }}
           onClick={handleClick}
+        />
+      );
+
+    case "audio":
+      return (
+        <AudioElement
+          element={element}
+          baseStyle={baseStyle}
+          assetBaseUrl={assetBaseUrl}
+          playing={playing}
+          onTap={() => onTap?.(element)}
+          onAudioRef={onAudioRef}
         />
       );
 
@@ -156,6 +197,193 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing }: Eleme
     default:
       return null;
   }
+}
+
+// --- audio element with fade-in/out ----------------------------------------
+
+interface AudioElementProps {
+  element: Element;
+  baseStyle: React.CSSProperties;
+  assetBaseUrl?: string;
+  playing?: boolean;
+  onTap: () => void;
+  onAudioRef?: (elementId: string, ref: HTMLAudioElement | null) => void;
+}
+
+function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudioRef }: AudioElementProps) {
+  const audioRef = React.useRef<HTMLAudioElement>(null);
+  const fadeTimeoutRef = React.useRef<ReturnType<typeof setTimeout>>();
+  const fadeAnimationRef = React.useRef<number>();
+  const maxFadeDurationMs = React.useRef(0);
+  const currentVolumeRef = React.useRef(1);
+
+  const props = element.props;
+  const src = resolveSrc(str(props.src, ""), assetBaseUrl);
+  const volume = num(props.volume, 1);
+  const fadeMs = Math.max(0, num(props.fade, 0));
+  const autoplay = bool(props.autoplay, false);
+  const loop = bool(props.loop, false);
+  const muted = bool(props.muted, false);
+
+  // Setup fade-in on play
+  const handlePlay = () => {
+    if (audioRef.current && fadeMs > 0) {
+      cancelAnimationFrame(fadeAnimationRef.current ?? 0);
+      clearTimeout(fadeTimeoutRef.current);
+
+      // Calculate max fade duration based on audio duration (in milliseconds)
+      const durationMs = (audioRef.current.duration || 0) * 1000;
+      maxFadeDurationMs.current = Math.min(Math.max(durationMs / 2, 0), 5000);
+      const clampedFadeMs = Math.min(fadeMs, maxFadeDurationMs.current);
+
+      // Fade in
+      currentVolumeRef.current = 0;
+      audioRef.current.volume = 0;
+      const startTime = Date.now();
+
+      const fadeInFrame = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / clampedFadeMs, 1);
+        if (audioRef.current) {
+          currentVolumeRef.current = volume * progress;
+          audioRef.current.volume = currentVolumeRef.current;
+        }
+        if (progress < 1) {
+          fadeAnimationRef.current = requestAnimationFrame(fadeInFrame);
+        } else {
+          // Schedule fade-out
+          if (durationMs > 0 && clampedFadeMs > 0) {
+            const fadeOutDelayMs = durationMs - clampedFadeMs;
+            fadeTimeoutRef.current = setTimeout(() => {
+              scheduleFadeOut(clampedFadeMs);
+            }, fadeOutDelayMs);
+          }
+        }
+      };
+      fadeAnimationRef.current = requestAnimationFrame(fadeInFrame);
+    }
+  };
+
+  const scheduleFadeOut = (fadeDurationMs: number) => {
+    if (!audioRef.current) return;
+    cancelAnimationFrame(fadeAnimationRef.current ?? 0);
+
+    const startVolume = audioRef.current.volume;
+    const startTime = Date.now();
+
+    const fadeOutFrame = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / fadeDurationMs, 1);
+      if (audioRef.current) {
+        currentVolumeRef.current = startVolume * (1 - progress);
+        audioRef.current.volume = Math.max(currentVolumeRef.current, 0);
+      }
+      if (progress < 1) {
+        fadeAnimationRef.current = requestAnimationFrame(fadeOutFrame);
+      }
+    };
+    fadeAnimationRef.current = requestAnimationFrame(fadeOutFrame);
+  };
+
+  const handleCanPlay = () => {
+    if (audioRef.current) {
+      const durationMs = (audioRef.current.duration || 0) * 1000;
+      maxFadeDurationMs.current = Math.min(Math.max(durationMs / 2, 0), 5000);
+      const clampedFadeMs = Math.min(fadeMs, maxFadeDurationMs.current);
+
+      // If audio is already playing, schedule fade-out
+      if (!audioRef.current.paused && clampedFadeMs > 0 && durationMs > 0) {
+        const currentTimeMs = audioRef.current.currentTime * 1000;
+        const timeUntilEndMs = durationMs - currentTimeMs;
+        const fadeOutStartMs = timeUntilEndMs - clampedFadeMs;
+
+        if (fadeOutStartMs > 0) {
+          clearTimeout(fadeTimeoutRef.current);
+          fadeTimeoutRef.current = setTimeout(() => {
+            scheduleFadeOut(clampedFadeMs);
+          }, Math.max(fadeOutStartMs, 0));
+        }
+      }
+    }
+  };
+
+  const handleEnded = () => {
+    cancelAnimationFrame(fadeAnimationRef.current ?? 0);
+    clearTimeout(fadeTimeoutRef.current);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      cancelAnimationFrame(fadeAnimationRef.current ?? 0);
+      clearTimeout(fadeTimeoutRef.current);
+    };
+  }, []);
+
+  // Set initial volume after render
+  React.useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+      currentVolumeRef.current = volume;
+    }
+  }, [volume]);
+
+  React.useEffect(() => {
+    onAudioRef?.(element.id, audioRef.current);
+    return () => {
+      onAudioRef?.(element.id, null);
+    };
+  }, [element.id, onAudioRef]);
+
+  // Embedded fallback audio icon (speaker with sound waves) - 60x60 SVG as data URI
+  const AUDIO_ICON_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='11 5 6 9 2 9 2 15 6 15 11 19 11 5'%3E%3C/polygon%3E%3Cpath d='M15.54 8.46a5 5 0 0 1 0 7.07'%3E%3C/path%3E%3Cpath d='M19.07 4.93a10 10 0 0 1 0 14.14'%3E%3C/path%3E%3C/svg%3E";
+
+  return (
+    <div
+      style={{
+        ...baseStyle,
+        border: "1px solid #64748b",
+        borderRadius: 4,
+        backgroundColor: "#1e293b",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+        overflow: "hidden",
+      }}
+      onClick={onTap}
+    >
+      {/* Background icon image */}
+      <img
+        src="app://audio-icon.png"
+        alt="Audio"
+        draggable={false}
+        onError={(e) => {
+          // Fallback to embedded SVG if bundled icon fails to load
+          e.currentTarget.src = AUDIO_ICON_FALLBACK;
+        }}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          opacity: 0.6,
+          pointerEvents: "none",
+        }}
+      />
+      {/* Hidden audio element for playback */}
+      <audio
+        ref={audioRef}
+        src={src}
+        autoPlay={autoplay && playing}
+        loop={loop}
+        muted={muted}
+        onPlay={handlePlay}
+        onCanPlay={handleCanPlay}
+        onEnded={handleEnded}
+        onError={() => console.warn(`Failed to load audio: ${src}`)}
+        style={{ display: "none" }}
+      />
+    </div>
+  );
 }
 
 // --- text element (per-line rich text + autofit) ----------------------------
