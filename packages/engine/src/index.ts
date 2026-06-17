@@ -24,6 +24,11 @@ export { applyOverrides } from "./runtime/applyOverrides.js";
 export { useOverrides } from "./runtime/useOverrides.js";
 
 // Data binding: live values from connectors -> element props.
+export { bindingContext, bindingHost } from "./data/BindingContext.js";
+export type { BindingContext, BindingHost } from "./data/BindingContext.js";
+
+// DEPRECATED: Use bindingContext/bindingHost instead (consolidated interface).
+// These will be removed in a future version.
 export { bindingStore, BindingStore } from "./data/bindingStore.js";
 export { resolveBindings } from "./data/applyBindings.js";
 export { useBindingValues } from "./data/useBindings.js";

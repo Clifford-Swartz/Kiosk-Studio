@@ -10,6 +10,10 @@ export interface PlayerContext {
   setProp: (elementId: string, key: string, value: unknown) => void;
   toggleVisibility: (elementId: string) => void;
   playAudio: (elementId: string) => void;
+  togglePlayVideo: (elementId: string) => void;
+  seekVideo: (elementId: string, time: number) => void;
+  setVolume: (elementId: string, volume: number) => void;
+  setSpeed: (elementId: string, rate: number) => void;
   project: Project;
 }
 
@@ -62,6 +66,49 @@ function runAction(action: Action, ctx: PlayerContext): void {
         ctx.playAudio(target);
       } else {
         warn("playMedia action needs string params.target");
+      }
+      return;
+    }
+
+    case "togglePlayPause": {
+      const target = action.params.target;
+      if (typeof target === "string") {
+        ctx.togglePlayVideo(target);
+      } else {
+        warn("togglePlayPause action needs string params.target");
+      }
+      return;
+    }
+
+    case "seekVideo": {
+      const target = action.params.target;
+      const time = action.params.time;
+      if (typeof target === "string" && typeof time === "number") {
+        ctx.seekVideo(target, Math.max(0, time));
+      } else {
+        warn("seekVideo needs params.target (string) and params.time (number)");
+      }
+      return;
+    }
+
+    case "setVolume": {
+      const target = action.params.target;
+      const volume = action.params.volume;
+      if (typeof target === "string" && typeof volume === "number") {
+        ctx.setVolume(target, Math.max(0, Math.min(1, volume)));
+      } else {
+        warn("setVolume needs params.target (string) and params.volume (number 0-1)");
+      }
+      return;
+    }
+
+    case "setSpeed": {
+      const target = action.params.target;
+      const rate = action.params.rate;
+      if (typeof target === "string" && typeof rate === "number") {
+        ctx.setSpeed(target, Math.max(0.25, Math.min(4, rate)));
+      } else {
+        warn("setSpeed needs params.target (string) and params.rate (number 0.25-4)");
       }
       return;
     }

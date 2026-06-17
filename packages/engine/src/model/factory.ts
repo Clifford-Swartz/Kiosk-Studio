@@ -34,11 +34,23 @@ const TYPE_DEFAULTS: Record<
   video: {
     width: 480,
     height: 270,
-    props: { src: "", fit: "cover", autoplay: true, loop: true, muted: true },
+    props: {
+      src: "",
+      fit: "cover",
+      autoplay: true,
+      loop: true,
+      muted: true,
+      volume: 1.0,
+      controls: true,
+      playbackRate: 1.0,
+      preload: "auto",
+      responsive: true,
+      fluid: false,
+    },
   },
   audio: {
-    width: 60,
-    height: 60,
+    width: 90,
+    height: 90,
     props: { src: "", volume: 1, fade: 0, autoplay: false, loop: false, muted: false },
   },
   button: {
@@ -97,6 +109,8 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     id: partial.id ?? newId("scene"),
     name: partial.name ?? "New scene",
     background: partial.background ?? "#0f172a",
+    backgroundSize: partial.backgroundSize,
+    backgroundPosition: partial.backgroundPosition,
     elements: partial.elements ?? [],
   };
 }

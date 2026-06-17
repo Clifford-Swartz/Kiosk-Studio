@@ -33,6 +33,8 @@ export const TriggerKindSchema = z.enum([
   "release",
   "enterScene",
   "dataChanged",
+  "hover",
+  "hoverEnd",
 ]);
 
 export const ActionTypeSchema = z.enum([
@@ -42,6 +44,10 @@ export const ActionTypeSchema = z.enum([
   "playMedia",
   "sendData",
   "animate",
+  "togglePlayPause",
+  "seekVideo",
+  "setVolume",
+  "setSpeed",
 ]);
 
 export const DataSourceKindSchema = z.enum([
@@ -155,6 +161,8 @@ export const SceneSchema = z.object({
   width: z.number().optional(),
   height: z.number().optional(),
   background: z.string().default("#000000"),
+  backgroundSize: z.enum(["cover", "contain", "fill"]).optional(),
+  backgroundPosition: z.string().optional(),
   elements: z.array(ElementSchema).default([]),
 });
 

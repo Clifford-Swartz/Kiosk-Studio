@@ -1,4 +1,11 @@
 /**
+ * DEPRECATED: Use BindingContext instead (see ./BindingContext.ts).
+ *
+ * This module will be removed in a future version. The binding pipeline has been
+ * consolidated into BindingContext, which provides:
+ * - bindingContext (React interface): useElement(element) for components
+ * - bindingHost (connector interface): setValue()/reset() for main process
+ *
  * A tiny reactive store of live data values, keyed by data-source id. The
  * connector host (main process) pushes values into the renderer, which calls
  * `setValue`; the Player subscribes and re-renders. Framework-agnostic (plain

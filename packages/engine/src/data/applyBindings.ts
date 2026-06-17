@@ -1,6 +1,12 @@
 import type { Binding, Element } from "../model/types.js";
 
 /**
+ * DEPRECATED: Use bindingContext.useElement() instead (see ./BindingContext.ts).
+ *
+ * This module will be removed in a future version. The binding pipeline has been
+ * consolidated into BindingContext, which handles subscription + resolution
+ * behind a single interface.
+ *
  * Apply data bindings to an element, producing a shallow clone whose bound
  * target props carry the current live values. Pure — given the same element and
  * value-getter, returns the same result. Live values are never written back to

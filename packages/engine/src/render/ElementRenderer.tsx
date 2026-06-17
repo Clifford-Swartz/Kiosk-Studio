@@ -1,11 +1,17 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import type { Element } from "../model/types.js";
 import { CollectionRenderer } from "./collections/CollectionRenderer.js";
+import videojs from "video.js";
+import "video.js/dist/video-js.css";
 
 export interface ElementRendererProps {
   element: Element;
   /** Fired when an element with a `tap` interaction is activated. */
   onTap?: (element: Element) => void;
+  /** Fired when an element with a `hover` interaction is entered. */
+  onHover?: (element: Element) => void;
+  /** Fired when an element with a `hoverEnd` interaction is left. */
+  onHoverEnd?: (element: Element) => void;
   /**
    * Base URL for resolving relative asset `src` values (e.g. "assets/x.png").
    * Typically a `file://<projectDir>/` URL. Absolute URLs pass through.
@@ -15,6 +21,8 @@ export interface ElementRendererProps {
   playing?: boolean;
   /** Callback to register audio elements by ID for playback control. */
   onAudioRef?: (elementId: string, ref: HTMLAudioElement | null) => void;
+  /** Callback to register video elements by ID for playback control. */
+  onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
 }
 
 // Embedded fallback: 1×1 transparent PNG data URI (for empty src fields)
@@ -53,11 +61,12 @@ export function resolveSrc(src: string, base?: string): string {
  * CSS transforms. This is the shared rendering primitive used by both the
  * Player and (later) the Editor canvas.
  */
-export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudioRef }: ElementRendererProps) {
+export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBaseUrl, playing, onAudioRef, onVideoRef }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
   const isInteractive = element.interactions.some((i) => i.trigger === "tap");
+  const isHoverable = element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -75,8 +84,36 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
 
   const handleClick = isInteractive ? () => onTap?.(element) : undefined;
 
+  const handleMouseEnter = onHover && isHoverable
+    ? (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "hover")) {
+          onHover(element);
+        }
+      }
+    : undefined;
+
+  const handleMouseLeave = onHoverEnd && isHoverable
+    ? (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "hoverEnd")) {
+          onHoverEnd(element);
+        }
+      }
+    : undefined;
+
   const children = element.children?.map((child) => (
-    <ElementRenderer key={child.id} element={child} onTap={onTap} assetBaseUrl={assetBaseUrl} playing={playing} />
+    <ElementRenderer
+      key={child.id}
+      element={child}
+      onTap={onTap}
+      onHover={onHover}
+      onHoverEnd={onHoverEnd}
+      assetBaseUrl={assetBaseUrl}
+      playing={playing}
+      onAudioRef={onAudioRef}
+      onVideoRef={onVideoRef}
+    />
   ));
 
   switch (type) {
@@ -90,6 +127,8 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
             border: str(props.border, "none"),
           }}
           onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
         >
           {children}
         </div>
@@ -97,7 +136,15 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
 
     case "text":
       return (
-        <TextElement props={props} baseStyle={baseStyle} width={width} height={height} onClick={handleClick}>
+        <TextElement
+          props={props}
+          baseStyle={baseStyle}
+          width={width}
+          height={height}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           {children}
         </TextElement>
       );
@@ -113,6 +160,8 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
           }}
           onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
           onError={(e) => {
             // If bundled placeholder fails to load, fall back to embedded SVG
             const target = e.currentTarget;
@@ -126,17 +175,12 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
 
     case "video":
       return (
-        <video
-          src={resolveSrc(str(props.src, ""), assetBaseUrl)}
-          autoPlay={bool(props.autoplay, true)}
-          loop={bool(props.loop, true)}
-          muted={bool(props.muted, true)}
-          playsInline
-          style={{
-            ...baseStyle,
-            objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
-          }}
-          onClick={handleClick}
+        <VideoElement
+          element={element}
+          assetBaseUrl={assetBaseUrl}
+          playing={playing}
+          onVideoRef={onVideoRef}
+          baseStyle={baseStyle}
         />
       );
 
@@ -168,6 +212,8 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
             cursor: "pointer",
           }}
           onClick={() => onTap?.(element)}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
         >
           {str(props.label, "Button")}
           {children}
@@ -176,14 +222,24 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
 
     case "group":
       return (
-        <div style={baseStyle} onClick={handleClick}>
+        <div
+          style={baseStyle}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           {children}
         </div>
       );
 
     case "collection":
       return (
-        <div style={{ ...baseStyle, overflow: "hidden" }} onClick={handleClick}>
+        <div
+          style={{ ...baseStyle, overflow: "hidden" }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <CollectionRenderer
             width={width}
             height={height}
@@ -386,6 +442,222 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
   );
 }
 
+// --- video element with Video.js -------------------------------------------
+
+interface VideoElementProps {
+  element: Element;
+  assetBaseUrl?: string;
+  playing?: boolean;
+  onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
+  baseStyle: React.CSSProperties;
+}
+
+/**
+ * Video.js-powered video element with advanced controls.
+ * Supports standard video formats (mp4, webm) and adaptive streaming (HLS m3u8).
+ */
+function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<ReturnType<typeof videojs> | null>(null);
+  const { props } = element;
+
+  const src = resolveSrc(str(props.src, ""), assetBaseUrl);
+
+  useEffect(() => {
+    const rawSrc = str(props.src, "");
+    //Is DOM Cache Cleared?
+    console.log(`[VideoElement ${element.id}] Init effect triggered`, {
+      hasVideoRef: !!videoRef.current,
+      isInDOM: videoRef.current ? document.contains(videoRef.current) : false,
+      src,
+      assetBaseUrl,
+      rawSrc,
+      playing,
+    });
+
+    if (!videoRef.current) {
+      console.warn(`[VideoElement ${element.id}] No video ref, skipping init`);
+      return;
+    }
+
+
+    console.log(`[VideoElement ${element.id}] Initializing Video.js player`, {
+      src,
+      detectedType: detectVideoType(src),
+      controls: bool(props.controls, true),
+      autoplay: bool(props.autoplay, true) && playing,
+      muted: bool(props.muted, true),
+    });
+
+    // Test 1.2: Check video element state before init
+    console.log('Video element state before init:', {
+      src: videoRef.current.src,
+      error: videoRef.current.error,
+      networkState: videoRef.current.networkState,
+      readyState: videoRef.current.readyState,
+      classList: Array.from(videoRef.current.classList),
+    });
+
+    // Check if Video.js already initialized this element (React Strict Mode double-invoke)
+    let player = videoRef.current && (videoRef.current as any).player;
+
+    if (player && !player.isDisposed()) {
+      console.log(`[VideoElement ${element.id}] Reusing existing Video.js player`);
+      playerRef.current = player;
+    } else {
+      // Clean up any stale Video.js data attributes
+      if (videoRef.current) {
+        videoRef.current.removeAttribute('data-vjs-player');
+        const vjsId = videoRef.current.id;
+        if (vjsId && vjsId.startsWith('vjs_video_')) {
+          videoRef.current.id = '';
+        }
+      }
+
+      // Reset video element state before Video.js init to clear any cached codec/error state
+      videoRef.current.src = '';
+      videoRef.current.removeAttribute('src');
+      const sourceElements = videoRef.current.querySelectorAll('source');
+      sourceElements.forEach(s => s.remove());
+      videoRef.current.load();
+      console.log('Video element reset before Video.js init');
+
+      // Initialize Video.js player
+      player = videojs(videoRef.current, {
+        controls: bool(props.controls, true),
+        autoplay: bool(props.autoplay, true) && playing,
+        loop: bool(props.loop, true),
+        muted: bool(props.muted, true),
+        preload: str(props.preload, "auto") as "auto" | "metadata" | "none",
+        responsive: bool(props.responsive, true),
+        fluid: bool(props.fluid, false),
+        playbackRates: [0.5, 1, 1.5, 2],
+      });
+
+      console.log(`[VideoElement ${element.id}] Video.js player created successfully`);
+
+      // Set initial volume and speed
+      player.volume(num(props.volume, 1));
+      player.playbackRate(num(props.playbackRate, 1));
+
+      // Store player reference on the video element for programmatic control
+      playerRef.current = player;
+      (videoRef.current as any).player = player;
+    }
+
+    // Register video element ref with Player
+    onVideoRef?.(element.id, videoRef.current);
+    console.log(`[VideoElement ${element.id}] Registered with Player context`);
+
+    // Cleanup: unregister from Player context
+    // NOTE: We intentionally don't dispose the player here to handle React Strict Mode
+    // double-invoke in dev. The init code above checks for existing players and reuses them.
+    return () => {
+      console.log(`[VideoElement ${element.id}] Cleanup: unregistering`);
+      onVideoRef?.(element.id, null);
+    };
+  }, [element.id, playing, onVideoRef]);
+
+  // Sync props with player when they change
+  useEffect(() => {
+    if (!playerRef.current) return;
+
+    console.log(`[VideoElement ${element.id}] Syncing props`, {
+      volume: num(props.volume, 1),
+      playbackRate: num(props.playbackRate, 1),
+      muted: bool(props.muted, true),
+      loop: bool(props.loop, true),
+    });
+
+    playerRef.current.volume(num(props.volume, 1));
+    playerRef.current.playbackRate(num(props.playbackRate, 1));
+    playerRef.current.muted(bool(props.muted, true));
+    playerRef.current.loop(bool(props.loop, true));
+  }, [props.volume, props.playbackRate, props.muted, props.loop]);
+
+  // Update source when it changes
+  useEffect(() => {
+    if (!playerRef.current || !src) {
+      console.log(`[VideoElement ${element.id}] Source update skipped`, {
+        hasPlayer: !!playerRef.current,
+        src,
+      });
+      return;
+    }
+
+    console.log(`[VideoElement ${element.id}] Updating source`, {
+      src,
+      type: detectVideoType(src),
+    });
+
+    playerRef.current.src({
+      src: src,
+      type: detectVideoType(src),
+    });
+  }, [src]);
+
+  const rawSrc = str(props.src, "");
+  const hasSource = rawSrc && rawSrc.trim() !== "";
+
+  return (
+    <div
+      data-vjs-player
+      style={baseStyle}
+    >
+      <video
+        ref={videoRef}
+        className="video-js vjs-big-play-centered"
+        playsInline
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+        }}
+      />
+      {!hasSource && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#1e293b",
+            color: "#64748b",
+            fontSize: 24,
+            fontFamily: "system-ui, sans-serif",
+            pointerEvents: "none",
+          }}
+        >
+          🎬 No video source
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Detect MIME type from file extension.
+ * Supports: mp4, webm, ogg, m3u8 (HLS), mpd (DASH).
+ */
+function detectVideoType(src: string): string {
+  const ext = src.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'mp4':
+      return 'video/mp4';
+    case 'webm':
+      return 'video/webm';
+    case 'ogg':
+      return 'video/ogg';
+    case 'm3u8':
+      return 'application/x-mpegURL';
+    case 'mpd':
+      return 'application/dash+xml';
+    default:
+      return 'video/mp4';
+  }
+}
+
 // --- text element (per-line rich text + autofit) ----------------------------
 
 interface TextRun {
@@ -413,6 +685,8 @@ function TextElement({
   width,
   height,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
   children,
 }: {
   props: Record<string, unknown>;
@@ -420,6 +694,8 @@ function TextElement({
   width: number;
   height: number;
   onClick?: () => void;
+  onMouseEnter?: (e: React.MouseEvent) => void;
+  onMouseLeave?: (e: React.MouseEvent) => void;
   children?: React.ReactNode;
 }) {
   const align = str(props.align, "left") as "left" | "center" | "right";
@@ -475,6 +751,8 @@ function TextElement({
         overflow: "hidden",
       }}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div ref={innerRef} style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: justify }}>
         {lines.map((r, i) => {

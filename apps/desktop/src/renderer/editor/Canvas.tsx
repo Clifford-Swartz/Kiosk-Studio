@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { ElementRenderer, resolveBindings, useBindingValues, type Element } from "@kiosk/engine";
+import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { resolveSrc, Player, type Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importImageBlob, projectAssetBase, importImageFromPath } from "./assets.js";
 import { collectTargets, snapMove, snapResize, type GuideLine, type SnapTargets } from "./snap.js";
@@ -61,6 +61,7 @@ export function Canvas({
   resumeCapture: () => void;
 }) {
 
+  const project = useEditor((s) => s.project);
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
   const selectElement = useEditor((s) => s.selectElement);
@@ -68,7 +69,6 @@ export function Canvas({
   const addImageElement = useEditor((s) => s.addImageElement);
   const filePath = useEditor((s) => s.filePath);
   const assetBaseUrl = projectAssetBase(filePath);
-  const getValue = useBindingValues(); // live data for canvas preview
   // Canvas size is project-wide (one size for all scenes).
   const sceneW = useEditor((s) => s.project.width);
   const sceneH = useEditor((s) => s.project.height);
@@ -287,25 +287,36 @@ export function Canvas({
           position: "relative",
           transform: `scale(${scale})`,
           transformOrigin: "center center",
-          background: scene.background,
+          ...((!scene.background || scene.background.startsWith('#'))
+            ? { background: scene.background }
+            : {
+                backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
+                backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
+                backgroundPosition: scene.backgroundPosition || 'center',
+                backgroundRepeat: 'no-repeat',
+              }),
           boxShadow: "0 0 0 1px #2a3441, 0 20px 60px rgba(0,0,0,0.5)",
           flexShrink: 0,
         }}
       >
-        {/* Visual layer: the Player's renderer, with interactions inert. The
-            renderer positions each element at its own (x,y,w,h); pointer events
-            are off so hit-testing happens on the per-element overlay below. */}
-        {scene.elements.map((el) => (
-          <div
-            key={el.id}
-            style={{
-              pointerEvents: "none",
-              visibility: editingId === el.id ? "hidden" : "visible",
-            }}
-          >
-            <ElementRenderer element={resolveBindings(el, getValue)} assetBaseUrl={assetBaseUrl} />
-          </div>
-        ))}
+        {/* Visual layer: Player component renders the full scene with working
+            video elements and interaction context. Pointer events are off so
+            hit-testing happens on the per-element overlay below. */}
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {editingId && (
+            <style>{`
+              [data-element-id="${editingId}"] {
+                visibility: hidden !important;
+              }
+            `}</style>
+          )}
+          <Player
+            project={project}
+            initialSceneId={scene.id}
+            assetBaseUrl={assetBaseUrl}
+            live={true}
+          />
+        </div>
 
         {/* Interaction layer: one transparent box per element matching its real
             rect, so a click hits the element actually under the cursor (not the

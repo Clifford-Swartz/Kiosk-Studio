@@ -11,6 +11,54 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 /**
+ * 16x16 SVG icon showing element type + visual properties.
+ * Rectangle → tiny rect with actual fill color
+ * Text → "T" with actual text color
+ * Video → ▶ with color hint
+ * Button → rounded rect with fill color
+ * Others → type icon unchanged
+ */
+function SmartThumbnail({ element }: { element: { type: string; props: Record<string, unknown> } }) {
+  const p = element.props;
+
+  switch (element.type) {
+    case "rectangle":
+      const rectFill = typeof p.fill === "string" ? p.fill : "#3b82f6";
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <rect x="2" y="4" width="12" height="8" fill={rectFill} rx="2" />
+        </svg>
+      );
+
+    case "text":
+      const textColor = typeof p.color === "string" ? p.color : "#ffffff";
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <text x="8" y="12" fill={textColor} fontSize="12" fontWeight="bold" textAnchor="middle">T</text>
+        </svg>
+      );
+
+    case "button":
+      const btnFill = typeof p.fill === "string" ? p.fill : "#2563eb";
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <rect x="2" y="4" width="12" height="8" fill={btnFill} rx="3" />
+        </svg>
+      );
+
+    case "video":
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <polygon points="6,4 6,12 12,8" fill="#94a3b8" />
+        </svg>
+      );
+
+    default:
+      return <span style={{ fontSize: 14, opacity: 0.8 }}>{TYPE_ICON[element.type] ?? "•"}</span>;
+  }
+}
+
+/**
  * Layer tree (Composer's "Scene Structure"). Lists the active scene's elements
  * top-to-bottom in draw order (topmost zIndex first). Behaviors:
  *  - click selects (synced to canvas + Properties)
@@ -101,6 +149,17 @@ export function SceneStructure() {
             }}
           >
             <span
+              style={{
+                width: 20,
+                textAlign: "right",
+                fontSize: 10,
+                color: "#64748b",
+                fontFamily: "monospace",
+              }}
+            >
+              {el.zIndex}
+            </span>
+            <span
               draggable={!isEditing}
               onDragStart={() => setDragIdx(i)}
               onDragEnd={() => {
@@ -112,8 +171,8 @@ export function SceneStructure() {
             >
               ⠿
             </span>
-            <span style={{ width: 18, textAlign: "center", opacity: 0.8 }}>
-              {TYPE_ICON[el.type] ?? "•"}
+            <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <SmartThumbnail element={el} />
             </span>
             {isEditing ? (
               <input

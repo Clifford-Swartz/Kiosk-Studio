@@ -87,6 +87,7 @@ export function PropertiesPanel() {
       <button
         onClick={() => removeElement(el.id)}
         style={{ ...deleteBtn, marginTop: 16 }}
+        title="Delete element (Delete or Backspace)"
       >
         Delete element
       </button>
@@ -157,6 +158,48 @@ function TypeFields({
         </>
       );
     case "image":
+      return (
+        <>
+          <button
+            style={chooseBtn}
+            onClick={async () => {
+              const filePath = useEditor.getState().filePath;
+              if (!filePath) {
+                alert("Save the project first.");
+                return;
+              }
+              const rel = await importContentFile(filePath, "image");
+              if (rel) set("src", rel);
+            }}
+          >
+            Choose image…
+          </button>
+          <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
+            …or paste (Ctrl+V) / drag a file onto the canvas.
+          </div>
+          <Row label="Source">
+            <input
+              type="text"
+              value={str(p.src) === "__placeholder__" ? "" : str(p.src)}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                set("src", val === "" ? "__placeholder__" : val);
+              }}
+              placeholder="Using default placeholder"
+              style={input}
+            />
+          </Row>
+          {str(p.src) !== "" && str(p.src) !== "__placeholder__" && (
+            <button
+              style={{ ...chooseBtn, marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+              onClick={() => set("src", "__placeholder__")}
+            >
+              Reset to placeholder
+            </button>
+          )}
+        </>
+      );
+
     case "video":
       return (
         <>
@@ -168,37 +211,102 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const type = el.type === "image" ? "image" : "video";
-              const rel = await importContentFile(filePath, type);
+              const rel = await importContentFile(filePath, "video");
               if (rel) set("src", rel);
             }}
           >
-            Choose {el.type}…
+            Choose video…
           </button>
-          <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
-            …or paste (Ctrl+V) / drag a file onto the canvas.
-          </div>
+
           <Row label="Source">
             <input
               type="text"
-              value={str(p.src) === "__placeholder__" ? "" : str(p.src)}
-              onChange={(e) => {
-                const val = e.target.value.trim();
-                // If cleared, revert to placeholder for images (not videos)
-                set("src", val === "" && el.type === "image" ? "__placeholder__" : val);
-              }}
-              placeholder={el.type === "image" ? "Using default placeholder" : ""}
+              value={str(p.src)}
+              onChange={(e) => set("src", e.target.value)}
               style={input}
             />
           </Row>
-          {el.type === "image" && str(p.src) !== "" && str(p.src) !== "__placeholder__" && (
-            <button
-              style={{ ...chooseBtn, marginTop: 4, fontSize: 11, padding: "4px 8px" }}
-              onClick={() => set("src", "__placeholder__")}
+
+          <Row label="Volume">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={n(p.volume, 1)}
+              onChange={(e) => set("volume", Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </Row>
+
+          <Row label="Speed">
+            <select
+              value={n(p.playbackRate, 1)}
+              onChange={(e) => set("playbackRate", Number(e.target.value))}
+              style={input}
             >
-              Reset to placeholder
-            </button>
-          )}
+              <option value={0.5}>0.5x (Slow)</option>
+              <option value={1}>1x (Normal)</option>
+              <option value={1.5}>1.5x (Fast)</option>
+              <option value={2}>2x (Very Fast)</option>
+            </select>
+          </Row>
+
+          <Row label="Controls">
+            <input
+              type="checkbox"
+              checked={bool(p.controls, true)}
+              onChange={(e) => set("controls", e.target.checked)}
+            />
+          </Row>
+
+          <Row label="Autoplay">
+            <input
+              type="checkbox"
+              checked={bool(p.autoplay, true)}
+              onChange={(e) => set("autoplay", e.target.checked)}
+            />
+          </Row>
+
+          <Row label="Loop">
+            <input
+              type="checkbox"
+              checked={bool(p.loop, true)}
+              onChange={(e) => set("loop", e.target.checked)}
+            />
+          </Row>
+
+          <Row label="Muted">
+            <input
+              type="checkbox"
+              checked={bool(p.muted, true)}
+              onChange={(e) => set("muted", e.target.checked)}
+            />
+          </Row>
+
+          <Row label="Fit">
+            <select
+              value={str(p.fit, "cover")}
+              onChange={(e) => set("fit", e.target.value)}
+              style={input}
+            >
+              <option value="cover">Cover</option>
+              <option value="contain">Contain</option>
+              <option value="fill">Fill</option>
+            </select>
+          </Row>
+
+          <Row label="Preload">
+            <select
+              value={str(p.preload, "auto")}
+              onChange={(e) => set("preload", e.target.value)}
+              style={input}
+            >
+              <option value="auto">Auto (full video)</option>
+              <option value="metadata">Metadata only</option>
+              <option value="none">None</option>
+            </select>
+          </Row>
         </>
       );
     case "audio":
@@ -334,9 +442,64 @@ function SceneSettings() {
       <Row label="Height"><Num value={project.height} onChange={(v) => updateProjectSize({ height: Number(v) })} /></Row>
 
       <div style={{ color: "#7c8aa0", fontSize: 11, margin: "14px 2px 4px" }}>
-        Scene “{scene.name}”
+        Scene "{scene.name}"
       </div>
-      <Row label="Background"><Color value={scene.background} onChange={(v) => updateActiveScene({ background: v })} /></Row>
+      <Row label="Background">
+        <Color
+          value={scene.background.startsWith('#') ? scene.background : '#0f172a'}
+          onChange={(v) => updateActiveScene({ background: v })}
+        />
+      </Row>
+
+      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "12px 2px 4px" }}>
+        Background image (overrides color)
+      </div>
+      <button
+        style={chooseBtn}
+        onClick={async () => {
+          const filePath = useEditor.getState().filePath;
+          if (!filePath) {
+            alert("Save the project first.");
+            return;
+          }
+          const rel = await importContentFile(filePath, "image");
+          if (rel) updateActiveScene({ background: rel });
+        }}
+      >
+        Choose background image…
+      </button>
+
+      {scene.background && !scene.background.startsWith('#') && (
+        <>
+          <Row label="Image">
+            <input
+              type="text"
+              value={scene.background}
+              onChange={(e) => updateActiveScene({ background: e.target.value })}
+              style={input}
+            />
+          </Row>
+
+          <Row label="Size">
+            <select
+              value={scene.backgroundSize || 'cover'}
+              onChange={(e) => updateActiveScene({ backgroundSize: e.target.value as "cover" | "contain" | "fill" })}
+              style={input}
+            >
+              <option value="cover">Cover (fill, may crop)</option>
+              <option value="contain">Contain (fit, may letterbox)</option>
+              <option value="fill">Fill (stretch, may distort)</option>
+            </select>
+          </Row>
+
+          <button
+            style={{ ...chooseBtn, background: '#3f1d2b', borderColor: '#7f1d1d', color: '#fca5a5', marginTop: 8 }}
+            onClick={() => updateActiveScene({ background: '#0f172a', backgroundSize: undefined })}
+          >
+            ✕ Remove image
+          </button>
+        </>
+      )}
 
       <div style={{ color: "#64748b", fontSize: 11, marginTop: 12, padding: "0 2px" }}>
         Tip: the canvas size applies to every scene — set it to match the kiosk screen so
@@ -455,7 +618,7 @@ function BindControl({ elementId, targetProp }: { elementId: string; targetProp:
   return (
     <div style={{ margin: "2px 0 8px", padding: "6px 8px", background: "#0e1218", border: "1px solid #1f2733", borderRadius: 6 }}>
       <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 4 }}>
-        Bind “{targetProp}” to data {binding && <span style={{ color: "#38bdf8" }}>● live</span>}
+        Bind "{targetProp}" to data {binding && <span style={{ color: "#38bdf8" }}>● live</span>}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
         <select
