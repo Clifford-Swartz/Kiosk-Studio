@@ -66,6 +66,8 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef,
   const removeScene = useEditor((s) => s.removeScene);
   const snapEnabled = useEditor((s) => s.snapEnabled);
   const toggleSnap = useEditor((s) => s.toggleSnap);
+  const viewport = useEditor((s) => s.canvasViewport);
+  const resetViewport = useEditor((s) => s.resetViewport);
 
   const active = project.scenes.find((s) => s.id === activeSceneId);
 
@@ -190,6 +192,17 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef,
         title={snapEnabled ? "Snap to guides: ON" : "Snap to guides: OFF"}
       >
         ⊞
+      </button>
+
+      <button
+        style={{
+          ...iconBtn,
+          opacity: viewport.userZoom !== 1 || viewport.panX !== 0 || viewport.panY !== 0 ? 1 : 0.4
+        }}
+        onClick={resetViewport}
+        title="Reset zoom to fit window (Ctrl+0)"
+      >
+        ⊡
       </button>
     </div>
   );

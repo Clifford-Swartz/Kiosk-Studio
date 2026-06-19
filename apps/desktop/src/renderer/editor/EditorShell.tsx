@@ -31,6 +31,7 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
   const copyElement = useEditor((s) => s.copyElement);
   const cutElement = useEditor((s) => s.cutElement);
   const pasteElement = useEditor((s) => s.pasteElement);
+  const resetViewport = useEditor((s) => s.resetViewport);
 
   // Register keyboard shortcuts for editor actions
   useKeyboardShortcuts({
@@ -87,6 +88,12 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
       },
       enabled: () => !!selectedId,
       description: "Delete selected element",
+      preventDefault: true,
+      log: true,
+    },
+    "Mod+0": {
+      action: () => resetViewport(),
+      description: "Reset zoom to fit window",
       preventDefault: true,
       log: true,
     },

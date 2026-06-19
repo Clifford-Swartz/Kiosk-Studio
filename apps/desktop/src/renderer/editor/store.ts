@@ -33,6 +33,12 @@ export interface EditorState {
   snapEnabled: boolean;
   /** Clipboard: holds a copy of the last copied/cut element. */
   clipboard: Element | null;
+  /** Canvas viewport state (UI-only, not saved to project). */
+  canvasViewport: {
+    userZoom: number; // 1.0 = fit-to-window, range 0.1 to 5.0
+    panX: number;     // Pan offset in screen pixels
+    panY: number;
+  };
 
   // --- selectors (derived) ---
   activeScene: () => Scene;
@@ -66,6 +72,9 @@ export interface EditorState {
 
   // --- editor ui ---
   toggleSnap: () => void;
+  setUserZoom: (zoom: number) => void;
+  setPan: (panX: number, panY: number) => void;
+  resetViewport: () => void;
 
   // --- scene ops ---
   addScene: () => void;
@@ -124,8 +133,19 @@ export const useEditor = create<EditorState>((set, get) => ({
   dirty: false,
   snapEnabled: true,
   clipboard: null,
+  canvasViewport: { userZoom: 1, panX: 0, panY: 0 },
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
+
+  setUserZoom: (zoom) => set((s) => ({
+    canvasViewport: { ...s.canvasViewport, userZoom: zoom }
+  })),
+
+  setPan: (panX, panY) => set((s) => ({
+    canvasViewport: { ...s.canvasViewport, panX, panY }
+  })),
+
+  resetViewport: () => set({ canvasViewport: { userZoom: 1, panX: 0, panY: 0 } }),
 
   activeScene: () => {
     const s = get();

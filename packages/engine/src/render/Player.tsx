@@ -16,6 +16,8 @@ export interface PlayerProps {
   assetBaseUrl?: string;
   /** Apply live data bindings (default true). */
   live?: boolean;
+  /** Hide audio element icons (for play/kiosk mode, not editor preview). */
+  hideAudioIcons?: boolean;
 }
 
 /**
@@ -29,7 +31,7 @@ interface SceneLayer {
   key: string;
 }
 
-export function Player({ project, initialSceneId, assetBaseUrl, live = true }: PlayerProps) {
+export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false }: PlayerProps) {
   // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
@@ -299,25 +301,37 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
               overflow: "hidden",
             }}
           >
-            {scene.elements.map((el) => {
-              // Bindings first (live data), then interaction overrides on top.
-              const resolved = live
-                ? applyOverrides(resolveBindings(el), getOverrides(el.id))
-                : el;
-              return (
-                <ElementRenderer
-                  key={el.id}
-                  element={resolved}
-                  onTap={handleTap}
-                  onHover={handleHover}
-                  onHoverEnd={handleHoverEnd}
-                  assetBaseUrl={assetBaseUrl}
-                  playing
-                  onAudioRef={onAudioRef}
-                  onVideoRef={onVideoRef}
-                />
-              );
-            })}
+            <div className="scene-elements" style={{ position: "absolute", inset: 0 }}>
+              {scene.elements.map((el) => {
+                // Bindings first (live data), then interaction overrides on top.
+                const resolved = live
+                  ? applyOverrides(resolveBindings(el), getOverrides(el.id))
+                  : el;
+
+                // Force audio elements to opacity: 0 in play/kiosk mode
+                const finalElement = resolved.type === "audio"
+                  ? { ...resolved, opacity: 1 }
+                  : resolved;
+
+                if (resolved.type === "audio") {
+                  console.log('[Player] Audio element opacity:', finalElement.opacity);
+                }
+
+                return (
+                  <ElementRenderer
+                    key={el.id}
+                    element={finalElement}
+                    onTap={handleTap}
+                    onHover={handleHover}
+                    onHoverEnd={handleHoverEnd}
+                    assetBaseUrl={assetBaseUrl}
+                    playing
+                    onAudioRef={onAudioRef}
+                    onVideoRef={onVideoRef}
+                  />
+                );
+              })}
+            </div>
           </div>
         );
       })}

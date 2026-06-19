@@ -7,6 +7,11 @@ import { collectTargets, snapMove, snapResize, type GuideLine, type SnapTargets 
 /** On-screen snap threshold in px; converted to scene units via the scale. */
 const SNAP_PX = 8;
 
+/** Zoom constants */
+const ZOOM_STEP = 0.1;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5.0;
+
 /** First image File from a DataTransfer/clipboard items list, if any. */
 function firstImageFile(items: DataTransferItemList | null, files: FileList | null): File | null {
   if (files) {
@@ -72,9 +77,13 @@ export function Canvas({
   // Canvas size is project-wide (one size for all scenes).
   const sceneW = useEditor((s) => s.project.width);
   const sceneH = useEditor((s) => s.project.height);
+  const viewport = useEditor((s) => s.canvasViewport);
+  const setUserZoom = useEditor((s) => s.setUserZoom);
+  const setPan = useEditor((s) => s.setPan);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
+  const finalScale = scale * viewport.userZoom;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const drag = useRef<DragState>(null);
@@ -83,6 +92,8 @@ export function Canvas({
   // Snap targets computed once at drag start; whether Alt is held (overrides snap).
   const dragTargets = useRef<SnapTargets | null>(null);
   const altHeld = useRef(false);
+  // Right-click pan state
+  const panDrag = useRef<{ startX: number; startY: number; initialPanX: number; initialPanY: number } | null>(null);
 
   // Track Alt so it can temporarily invert snapping during a drag.
   useEffect(() => {
@@ -113,6 +124,55 @@ export function Canvas({
     return () => ro.disconnect();
   }, [sceneW, sceneH]);
 
+  // Manual wheel event listener with { passive: false } to allow preventDefault
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Block zoom during active drag
+      if (drag.current) return;
+
+      e.preventDefault();
+
+      const stage = host.querySelector("[data-stage]") as HTMLElement | null;
+      if (!stage) return;
+
+      // Calculate new zoom level
+      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      const st = useEditor.getState();
+      const vp = st.canvasViewport;
+      const oldZoom = vp.userZoom;
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom + delta));
+
+      if (newZoom === oldZoom) return; // Already at limit
+
+      // Apply cursor-position zoom math
+      const stageRect = stage.getBoundingClientRect();
+      const stageCenterX = stageRect.left + stageRect.width / 2;
+      const stageCenterY = stageRect.top + stageRect.height / 2;
+      const cursorOffsetX = e.clientX - stageCenterX;
+      const cursorOffsetY = e.clientY - stageCenterY;
+
+      const oldScale = scaleRef.current * oldZoom;
+      const newScale = scaleRef.current * newZoom;
+      const scaleRatio = newScale / oldScale;
+
+      const deltaX = cursorOffsetX * (scaleRatio - 1);
+      const deltaY = cursorOffsetY * (scaleRatio - 1);
+
+      const newPanX = vp.panX - deltaX;
+      const newPanY = vp.panY - deltaY;
+
+      // Update store
+      setUserZoom(newZoom);
+      setPan(newPanX, newPanY);
+    };
+
+    host.addEventListener("wheel", handleWheel, { passive: false });
+    return () => host.removeEventListener("wheel", handleWheel);
+  }, [setUserZoom, setPan]);
+
   const selected = scene.elements.find((e) => e.id === selectedId) ?? null;
   const editingEl = scene.elements.find((e) => e.id === editingId) ?? null;
 
@@ -135,8 +195,8 @@ export function Canvas({
     if (!stage) return { x: 100, y: 100 };
     const r = stage.getBoundingClientRect();
     return {
-      x: Math.round((clientX - r.left) / scale),
-      y: Math.round((clientY - r.top) / scale),
+      x: Math.round((clientX - r.left) / finalScale),
+      y: Math.round((clientY - r.top) / finalScale),
     };
   }
 
@@ -169,12 +229,12 @@ export function Canvas({
   const onPointerMove = useRef((e: PointerEvent) => {
     const d = drag.current;
     if (!d) return;
-    const sc = scaleRef.current;
+    const st = useEditor.getState();
+    const sc = scaleRef.current * st.canvasViewport.userZoom;
     const dx = (e.clientX - d.startX) / sc;
     const dy = (e.clientY - d.startY) / sc;
     const threshold = SNAP_PX / sc;
     const targets = dragTargets.current;
-    const st = useEditor.getState();
     const snapOn = st.snapEnabled !== altHeld.current; // Alt inverts
 
     if (d.kind === "move") {
@@ -211,6 +271,23 @@ export function Canvas({
       // ALWAYS resume capture, even if exception occurs above
       resumeCapture(); // Resume history tracking and capture final position
     }
+  }).current;
+
+  const onPanMove = useRef((e: PointerEvent) => {
+    const pd = panDrag.current;
+    if (!pd) return;
+
+    const dx = e.clientX - pd.startX;
+    const dy = e.clientY - pd.startY;
+
+    setPan(pd.initialPanX + dx, pd.initialPanY + dy);
+  }).current;
+
+  const onPanEnd = useRef(() => {
+    panDrag.current = null;
+    if (hostRef.current) hostRef.current.style.cursor = "";
+    window.removeEventListener("pointermove", onPanMove);
+    window.removeEventListener("pointerup", onPanEnd);
   }).current;
 
   /** Snap targets from every element EXCEPT the one being dragged, + canvas. */
@@ -262,10 +339,26 @@ export function Canvas({
   return (
     <div
       ref={hostRef}
-      onPointerDown={() => {
-        selectElement(null);
-        setEditingId(null);
+      onPointerDown={(e) => {
+        // Right-click initiates pan
+        if (e.button === 2) {
+          e.preventDefault();
+          e.stopPropagation();
+          panDrag.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            initialPanX: viewport.panX,
+            initialPanY: viewport.panY,
+          };
+          if (hostRef.current) hostRef.current.style.cursor = "grabbing";
+          window.addEventListener("pointermove", onPanMove);
+          window.addEventListener("pointerup", onPanEnd);
+        } else {
+          selectElement(null);
+          setEditingId(null);
+        }
       }}
+      onContextMenu={(e) => e.preventDefault()}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       style={{
@@ -285,7 +378,7 @@ export function Canvas({
           width: sceneW,
           height: sceneH,
           position: "relative",
-          transform: `scale(${scale})`,
+          transform: `translate(${viewport.panX}px, ${viewport.panY}px) scale(${finalScale})`,
           transformOrigin: "center center",
           ...((!scene.background || scene.background.startsWith('#'))
             ? { background: scene.background }
@@ -325,6 +418,9 @@ export function Canvas({
           <div
             key={`hit-${el.id}`}
             onPointerDown={(e) => {
+              // Right-click should not interact with elements (used for pan)
+              if (e.button === 2) return;
+
               const now = Date.now();
               const last = lastDown.current;
               lastDown.current = { id: el.id, t: now };
@@ -358,14 +454,14 @@ export function Canvas({
         {editingEl && (
           <InlineTextEditor
             element={editingEl}
-            scale={scale}
+            scale={finalScale}
             onChange={(v) => updateProps(editingEl.id, { [textPropFor(editingEl.type)]: v })}
             onDone={() => setEditingId(null)}
           />
         )}
 
         {selected && !editingEl && (
-          <SelectionOverlay element={selected} scale={scale} onResize={beginResize} />
+          <SelectionOverlay element={selected} scale={finalScale} onResize={beginResize} />
         )}
 
         {/* Alignment guides: thin lines at snapped positions during a drag. */}
@@ -377,7 +473,7 @@ export function Canvas({
                 position: "absolute",
                 left: g.pos,
                 top: 0,
-                width: 1 / scale,
+                width: 1 / finalScale,
                 height: sceneH,
                 background: "#f472b6",
                 pointerEvents: "none",
@@ -392,7 +488,7 @@ export function Canvas({
                 left: 0,
                 top: g.pos,
                 width: sceneW,
-                height: 1 / scale,
+                height: 1 / finalScale,
                 background: "#f472b6",
                 pointerEvents: "none",
                 zIndex: 99999,

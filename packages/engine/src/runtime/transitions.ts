@@ -23,7 +23,62 @@ export function getTransition(type: string): TransitionFn | undefined {
 // Built-in transitions
 // ---------------------------------------------------------------------------
 
-registerTransition("fade", async ({ outgoingEl, incomingEl, duration }) => {
+registerTransition("fade", async ({ outgoingEl, incomingEl, duration, elementsOnly }) => {
+  if (elementsOnly) {
+    // Query for element wrappers
+    const outgoingElements = outgoingEl.querySelector<HTMLElement>('.scene-elements');
+    const incomingElements = incomingEl.querySelector<HTMLElement>('.scene-elements');
+
+    if (!outgoingElements || !incomingElements) {
+      console.warn('[fade] elementsOnly requires .scene-elements wrapper, falling back');
+      // Fall through to standard animation below
+    } else {
+      // ===== INITIAL STATE =====
+      // Set incoming wrapper opacity to 0 before any visibility changes
+      incomingElements.style.opacity = "0";
+      incomingElements.style.transition = "none";
+      // Keep incoming container hidden initially so outgoing is visible
+      incomingEl.style.display = "none";
+
+      // Force layout
+      void incomingElements.offsetHeight;
+
+      // ===== PHASE 1: Fade out outgoing elements =====
+      outgoingElements.style.transition = `opacity ${duration}ms ease-in-out`;
+      outgoingElements.style.opacity = "0";
+
+      await sleep(duration);
+
+      // ===== MIDPOINT: Swap container visibility =====
+      // All elements invisible - swap backgrounds imperceptibly
+      outgoingEl.style.display = "none";
+      incomingEl.style.display = "block";
+
+      // Force layout after display swap
+      void incomingEl.offsetHeight;
+
+      // ===== PHASE 2: Fade in incoming elements =====
+      incomingElements.style.transition = `opacity ${duration}ms ease-in-out`;
+      incomingElements.style.opacity = "1";
+
+      await sleep(duration);
+
+      // ===== CLEANUP =====
+      // Reset styles on both wrappers and containers (after Phase 2 completes)
+      outgoingEl.style.display = "";
+      incomingEl.style.transition = "";
+      incomingEl.style.opacity = "";
+      outgoingElements.style.transition = "";
+      outgoingElements.style.opacity = "";
+      incomingElements.style.transition = "";
+      incomingElements.style.opacity = "";
+
+      return; // Exit early, skip standard animation
+    }
+  }
+
+  // ===== STANDARD ANIMATION (elementsOnly=false) =====
+  // Existing code unchanged - animate entire containers
   incomingEl.style.opacity = "0";
   incomingEl.style.transition = "none";
 
@@ -63,7 +118,7 @@ registerTransition("slide", async ({ containerEl, outgoingEl, incomingEl, direct
   const distance = axis === "X" ? width : height;
 
   // Position incoming offscreen
-  incomingEl.style.transform = `translate${axis}(${sign * distance}px)`;
+  incomingEl.style.transform = `translate${axis}(${sign * distance }px)`;
   incomingEl.style.transition = "none";
   incomingEl.style.display = "block";
 
@@ -123,7 +178,63 @@ registerTransition("push", async ({ containerEl, outgoingEl, incomingEl, directi
   incomingEl.style.left = "";
 });
 
-registerTransition("zoom", async ({ outgoingEl, incomingEl, duration }) => {
+registerTransition("zoom", async ({ outgoingEl, incomingEl, duration, elementsOnly }) => {
+  if (elementsOnly) {
+    // Query for element wrappers
+    const outgoingElements = outgoingEl.querySelector<HTMLElement>('.scene-elements');
+    const incomingElements = incomingEl.querySelector<HTMLElement>('.scene-elements');
+
+    if (!outgoingElements || !incomingElements) {
+      console.warn('[zoom] elementsOnly requires .scene-elements wrapper, falling back');
+      // Fall through to standard animation
+    } else {
+      // ===== INITIAL STATE =====
+      incomingElements.style.transform = "scale(0.8)";
+      incomingElements.style.opacity = "0";
+      incomingElements.style.transition = "none";
+      // Keep incoming container hidden initially so outgoing is visible
+      incomingEl.style.display = "none";
+
+      void incomingElements.offsetHeight;
+
+      // ===== PHASE 1: Zoom out + fade out outgoing elements =====
+      outgoingElements.style.transition = `transform ${duration}ms ease-in-out, opacity ${duration}ms ease-in-out`;
+      outgoingElements.style.transform = "scale(1.2)";
+      outgoingElements.style.opacity = "0";
+
+      await sleep(duration);
+
+      // ===== MIDPOINT: Swap container visibility =====
+      outgoingEl.style.display = "none";
+      incomingEl.style.display = "block";
+
+      // Force layout after display swap
+      void incomingEl.offsetHeight;
+
+      // ===== PHASE 2: Zoom in + fade in incoming elements =====
+      incomingElements.style.transition = `transform ${duration}ms ease-in-out, opacity ${duration}ms ease-in-out`;
+      incomingElements.style.transform = "scale(1)";
+      incomingElements.style.opacity = "1";
+
+      await sleep(duration);
+
+      // ===== CLEANUP =====
+      // Reset styles on both wrappers and containers (after Phase 2 completes)
+      outgoingEl.style.display = "";
+      incomingEl.style.transition = "";
+      incomingEl.style.opacity = "";
+      outgoingElements.style.transition = "";
+      outgoingElements.style.transform = "";
+      outgoingElements.style.opacity = "";
+      incomingElements.style.transition = "";
+      incomingElements.style.transform = "";
+      incomingElements.style.opacity = "";
+
+      return;
+    }
+  }
+
+  // ===== STANDARD ANIMATION (existing code unchanged) =====
   incomingEl.style.transform = "scale(0.8)";
   incomingEl.style.opacity = "0";
   incomingEl.style.transition = "none";

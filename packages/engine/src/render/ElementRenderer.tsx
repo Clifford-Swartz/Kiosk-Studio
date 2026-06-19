@@ -393,8 +393,8 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     };
   }, [element.id, onAudioRef]);
 
-  // Embedded fallback audio icon (speaker with sound waves) - 60x60 SVG as data URI
-  const AUDIO_ICON_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='11 5 6 9 2 9 2 15 6 15 11 19 11 5'%3E%3C/polygon%3E%3Cpath d='M15.54 8.46a5 5 0 0 1 0 7.07'%3E%3C/path%3E%3Cpath d='M19.07 4.93a10 10 0 0 1 0 14.14'%3E%3C/path%3E%3C/svg%3E";
+  // Embedded audio icon (speaker with sound waves) - base64 encoded SVG
+  const AUDIO_ICON = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM5NGEzYjgiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWdvbiBwb2ludHM9IjExIDUgNiA5IDIgOSAyIDE1IDYgMTUgMTEgMTkgMTEgNSI+PC9wb2x5Z29uPjxwYXRoIGQ9Ik0xNS41NCA4LjQ2YTUgNSAwIDAgMSAwIDcuMDciPjwvcGF0aD48cGF0aCBkPSJNMTkuMDcgNC45M2ExMCAxMCAwIDAgMSAwIDE0LjE0Ij48L3BhdGg+PC9zdmc+";
 
   return (
     <div
@@ -413,13 +413,9 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     >
       {/* Background icon image */}
       <img
-        src="app://audio-icon.png"
+        src={AUDIO_ICON}
         alt="Audio"
         draggable={false}
-        onError={(e) => {
-          // Fallback to embedded SVG if bundled icon fails to load
-          e.currentTarget.src = AUDIO_ICON_FALLBACK;
-        }}
         style={{
           width: "100%",
           height: "100%",
