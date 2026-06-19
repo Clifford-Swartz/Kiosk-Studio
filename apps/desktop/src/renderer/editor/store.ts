@@ -29,6 +29,12 @@ export interface EditorState {
   filePath: string | null;
   /** Unsaved changes since last load/save. */
   dirty: boolean;
+  /**
+   * Bumped by loadProject and markSaved. The undo/redo hook watches this to
+   * know when to wipe its history (save-as-checkpoint / load = fresh slate).
+   * See ADR 0003. History itself lives in the hook, not the store.
+   */
+  historyNonce: number;
   /** Editor UI: snap-to-guides on/off (not part of the saved project). */
   snapEnabled: boolean;
   /** Clipboard: holds a copy of the last copied/cut element. */
@@ -40,6 +46,13 @@ export interface EditorState {
   // --- project lifecycle ---
   loadProject: (project: Project, filePath?: string | null) => void;
   markSaved: (filePath: string) => void;
+  /**
+   * Restore a project from undo/redo history WITHOUT bumping historyNonce
+   * (so the hook doesn't treat its own restore as a fresh load) and WITHOUT
+   * marking dirty. Preserves the current selection if that element still
+   * exists in the restored project, else clears it. See ADR 0003.
+   */
+  restoreFromHistory: (project: Project) => void;
 
   // --- element ops (operate on the active scene) ---
   addElement: (type: ElementType) => void;
@@ -70,8 +83,8 @@ export interface EditorState {
   // --- scene ops ---
   addScene: () => void;
   renameScene: (id: string, name: string) => void;
-  /** Update active scene properties (background, backgroundSize, backgroundPosition — size is project-wide). */
-  updateActiveScene: (patch: Partial<Pick<Scene, "background" | "backgroundSize" | "backgroundPosition">>) => void;
+  /** Update active scene properties (background, backgroundSize, backgroundPosition, transition — canvas size is project-wide). */
+  updateActiveScene: (patch: Partial<Pick<Scene, "background" | "backgroundSize" | "backgroundPosition" | "transition">>) => void;
   /** Update the project-wide canvas size (applies to all scenes). */
   updateProjectSize: (size: { width?: number; height?: number }) => void;
   removeScene: (id: string) => void;
@@ -122,6 +135,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   selectedId: null,
   filePath: null,
   dirty: false,
+  historyNonce: 0,
   snapEnabled: true,
   clipboard: null,
 
@@ -135,15 +149,40 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   loadProject: (project, filePath = null) =>
-    set({
+    set((state) => ({
       project,
       activeSceneId: project.startSceneId ?? project.scenes[0]?.id ?? "",
       selectedId: null,
       filePath,
       dirty: false,
-    }),
+      // New project → tell the hook to wipe history (no cross-project undo).
+      historyNonce: state.historyNonce + 1,
+    })),
 
-  markSaved: (filePath) => set({ filePath, dirty: false }),
+  // Save = checkpoint. Bumping the nonce wipes undo history (ADR 0003) and
+  // deselecting reinforces the "committed state" moment.
+  markSaved: (filePath) =>
+    set((state) => ({
+      filePath,
+      dirty: false,
+      selectedId: null,
+      historyNonce: state.historyNonce + 1,
+    })),
+
+  restoreFromHistory: (project) =>
+    set((state) => {
+      // Keep the selection if the element still exists in the restored project,
+      // so the user can keep editing without reselecting.
+      const scene = project.scenes.find((s) => s.id === state.activeSceneId);
+      const stillExists =
+        state.selectedId != null &&
+        !!scene?.elements.some((e) => e.id === state.selectedId);
+      return {
+        project,
+        selectedId: stillExists ? state.selectedId : null,
+        // Restores are not edits: don't mark dirty, don't bump the nonce.
+      };
+    }),
 
   addElement: (type) =>
     set((state) => {

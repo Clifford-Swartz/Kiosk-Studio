@@ -59,7 +59,7 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
           }
         }
 
-        return groups.map((group, gidx) => {
+        return groups.map((group) => {
           if (group.kind === "single") {
             const it = group.interactions[0];
             return (

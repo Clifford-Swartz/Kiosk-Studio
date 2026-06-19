@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Element, Project, Scene } from "../model/types.js";
 import { ElementRenderer, resolveSrc } from "./ElementRenderer.js";
 import { runInteraction, type PlayerContext } from "../runtime/interactions.js";

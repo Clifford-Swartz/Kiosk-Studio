@@ -45,14 +45,14 @@ function MenuDropdown({
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef, redoRef, canUndo, canRedo }: {
+export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, onUndo, onRedo, canUndo, canRedo }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
-  undoRef: React.MutableRefObject<() => void>;
-  redoRef: React.MutableRefObject<() => void>;
+  onUndo: () => void;
+  onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
 }) {
@@ -168,7 +168,7 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef,
 
       <button
         style={{ ...iconBtn, ...(canUndo ? {} : disabledIconBtn) }}
-        onClick={() => undoRef.current()}
+        onClick={() => onUndo()}
         disabled={!canUndo}
         title="Undo (Ctrl+Z)"
       >
@@ -177,7 +177,7 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef,
 
       <button
         style={{ ...iconBtn, ...(canRedo ? {} : disabledIconBtn) }}
-        onClick={() => redoRef.current()}
+        onClick={() => onRedo()}
         disabled={!canRedo}
         title="Redo (Ctrl+Y)"
       >
