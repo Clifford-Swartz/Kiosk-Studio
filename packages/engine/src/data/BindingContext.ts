@@ -57,6 +57,7 @@ class BindingContextImpl implements BindingContext, BindingHost {
 
   clearCache(): void {
     this.cache.clear();
+    this.version++; // Force cache miss after project structure changes
   }
 
   // Stable resolver bound to this instance (doesn't recreate)

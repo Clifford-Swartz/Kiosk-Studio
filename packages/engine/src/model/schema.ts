@@ -59,6 +59,28 @@ export const DataSourceKindSchema = z.enum([
   "ble",
 ]);
 
+export const TransitionTypeSchema = z.enum([
+  "none",
+  "fade",
+  "slide",
+  "push",
+  "zoom",
+]);
+
+export const TransitionDirectionSchema = z.enum([
+  "up",
+  "down",
+  "left",
+  "right",
+]);
+
+export const TransitionSchema = z.object({
+  type: TransitionTypeSchema.default("none"),
+  direction: TransitionDirectionSchema.optional(),
+  duration: z.number().min(0).max(5000).default(300),
+  elementsOnly: z.boolean().default(false),
+});
+
 // ---------------------------------------------------------------------------
 // Interactions & bindings
 // ---------------------------------------------------------------------------
@@ -163,6 +185,7 @@ export const SceneSchema = z.object({
   background: z.string().default("#000000"),
   backgroundSize: z.enum(["cover", "contain", "fill"]).optional(),
   backgroundPosition: z.string().optional(),
+  transition: TransitionSchema.optional(),
   elements: z.array(ElementSchema).default([]),
 });
 

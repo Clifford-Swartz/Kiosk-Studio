@@ -6,6 +6,7 @@ import { bindingContext, bindingHost } from "../data/BindingContext.js";
 import { overrideStore } from "../runtime/overrideStore.js";
 import { applyOverrides } from "../runtime/applyOverrides.js";
 import { useOverrides } from "../runtime/useOverrides.js";
+import { createTransitionController } from "../runtime/TransitionController.js";
 
 export interface PlayerProps {
   project: Project;
@@ -23,30 +24,117 @@ export interface PlayerProps {
  * the available space (letterboxed), the way a kiosk authored at 1920x1080
  * should display on any screen.
  */
+interface SceneLayer {
+  scene: Scene;
+  key: string;
+}
+
 export function Player({ project, initialSceneId, assetBaseUrl, live = true }: PlayerProps) {
-  console.log('New player element created.')
+  // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
-  const [activeSceneId, setActiveSceneId] = useState(firstSceneId);
+  const firstScene = project.scenes.find((s) => s.id === firstSceneId) ?? project.scenes[0];
 
-  // Sync initialSceneId prop changes to internal state (for Canvas scene switching)
+  const [sceneLayers, setSceneLayers] = useState<SceneLayer[]>([
+    { scene: firstScene!, key: `${firstScene!.id}-0` }
+  ]);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  const keyCounterRef = useRef(0);
+
+  // Sync initialSceneId prop changes (for Canvas scene switching)
+  // Issue 1 fix: Removed sceneLayers from deps to prevent infinite loop
+  // Issue 5 fix: Use stable counter instead of Date.now()
   useEffect(() => {
-    if (initialSceneId && initialSceneId !== activeSceneId) {
-      setActiveSceneId(initialSceneId);
+    const currentSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
+    if (initialSceneId && initialSceneId !== currentSceneId) {
+      const targetScene = project.scenes.find((s) => s.id === initialSceneId);
+      if (targetScene) {
+        setSceneLayers([{ scene: targetScene, key: `${targetScene.id}-${++keyCounterRef.current}` }]);
+      }
     }
-  }, [initialSceneId, activeSceneId]);
+  }, [initialSceneId, project.scenes]);
 
-  const scene: Scene | undefined = useMemo(
-    () => project.scenes.find((s) => s.id === activeSceneId) ?? project.scenes[0],
-    [project, activeSceneId]
-  );
+  // Sync project prop changes (for Canvas editor: element moves, property edits)
+  useEffect(() => {
+    const currentSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
+    if (!currentSceneId) return;
+
+    const updatedScene = project.scenes.find((s) => s.id === currentSceneId);
+    if (!updatedScene) return;
+
+    // Update the active scene layer with latest data
+    setSceneLayers((prev) => {
+      const updated = [...prev];
+      updated[updated.length - 1] = {
+        ...updated[updated.length - 1],
+        scene: updatedScene,
+      };
+      return updated;
+    });
+  }, [project]);
 
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const transitionControllerRef = useRef(createTransitionController());
+  const stageRef = useRef<HTMLDivElement>(null);
+  const isFirstSceneRef = useRef(true);
 
-  const ctx: PlayerContext = useMemo(
-    () => ({
-      goToScene: (sceneId) => setActiveSceneId(sceneId),
+  // Issue 6 fix: Extract transition execution to useCallback
+  const executeTransition = useCallback(async (targetScene: Scene, newKey: string) => {
+    const stageEl = stageRef.current;
+    if (!stageEl) return;
+
+    const containers = stageEl.querySelectorAll<HTMLDivElement>('[data-scene-container]');
+    if (containers.length < 2) {
+      console.warn("[Player] Expected 2 scene containers for transition");
+      setSceneLayers([{ scene: targetScene, key: newKey }]);
+      setIsTransitioning(false);
+      return;
+    }
+
+    const outgoingEl = containers[containers.length - 2];
+    const incomingEl = containers[containers.length - 1];
+
+    await transitionControllerRef.current.transitionTo(targetScene, stageEl, outgoingEl, incomingEl);
+
+    // Remove outgoing scene
+    setSceneLayers([{ scene: targetScene, key: newKey }]);
+    setIsTransitioning(false);
+  }, []);
+
+  // Issue 2 fix: Remove useMemo to prevent stale closures
+  // ctx object is cheap to create, no need for memoization
+  const ctx: PlayerContext = {
+    goToScene: async (sceneId) => {
+        if (isTransitioning || transitionControllerRef.current.state === "transitioning") {
+          console.warn("[Player] goToScene ignored: transition in progress");
+          return;
+        }
+
+        const targetScene = project.scenes.find((s) => s.id === sceneId);
+        if (!targetScene) {
+          console.warn(`[Player] goToScene: scene ${sceneId} not found`);
+          return;
+        }
+
+        // Skip transition for first scene or if no transition defined
+        if (isFirstSceneRef.current || !targetScene.transition || targetScene.transition.type === "none") {
+          isFirstSceneRef.current = false;
+          setSceneLayers([{ scene: targetScene, key: `${targetScene.id}-${++keyCounterRef.current}` }]);
+          return;
+        }
+
+        // Run transition
+        setIsTransitioning(true);
+        const newKey = `${targetScene.id}-${++keyCounterRef.current}`;
+        setSceneLayers((prev) => [...prev, { scene: targetScene, key: newKey }]);
+
+        // Wait for render, then run transition
+        requestAnimationFrame(() => {
+          executeTransition(targetScene, newKey);
+        });
+      },
       setProp: (elementId, key, value) => overrideStore.setOverride(elementId, key, value),
       toggleVisibility: (elementId) => overrideStore.toggle(elementId, "__hidden"),
       playAudio: (elementId) => {
@@ -59,72 +147,52 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
         }
       },
       togglePlayVideo: (elementId) => {
-        console.log(`[Player] togglePlayVideo called for element: ${elementId}`);
         const video = videoElementsRef.current.get(elementId);
-
         if (!video) {
-          console.warn(`[Player] togglePlayVideo: video element ${elementId} not found in registry`);
-          console.log(`[Player] Available video elements:`, Array.from(videoElementsRef.current.keys()));
+          console.warn(`[Player] togglePlayVideo: video element ${elementId} not found`);
           return;
         }
 
-        if (!(video as any).player) {
-          console.warn(`[Player] togglePlayVideo: video element ${elementId} has no player attached`);
-          return;
-        }
-
-        const player = (video as any).player;
-        const isPaused = player.paused();
-        console.log(`[Player] togglePlayVideo: element ${elementId} is currently ${isPaused ? 'paused' : 'playing'}`);
-
-        if (isPaused) {
-          console.log(`[Player] togglePlayVideo: calling play() on ${elementId}`);
-          player.play();
+        if (video.paused) {
+          video.play().catch((err) => console.warn(`[Player] Play failed for ${elementId}:`, err));
         } else {
-          console.log(`[Player] togglePlayVideo: calling pause() on ${elementId}`);
-          player.pause();
+          video.pause();
         }
       },
       seekVideo: (elementId, time) => {
-        console.log(`[Player] seekVideo called for element: ${elementId}, time: ${time}`);
         const video = videoElementsRef.current.get(elementId);
-        if (video && (video as any).player) {
-          (video as any).player.currentTime(time);
-          console.log(`[Player] seekVideo: set currentTime to ${time} for ${elementId}`);
+        if (video) {
+          video.currentTime = time;
         } else {
-          console.warn(`[Player] seekVideo: video element ${elementId} not found or has no player`);
+          console.warn(`[Player] seekVideo: video element ${elementId} not found`);
         }
       },
       setVolume: (elementId, volume) => {
-        console.log(`[Player] setVolume called for element: ${elementId}, volume: ${volume}`);
         const audio = audioElementsRef.current.get(elementId);
         const video = videoElementsRef.current.get(elementId);
         if (audio) {
           audio.volume = volume;
-          console.log(`[Player] setVolume: set audio volume to ${volume} for ${elementId}`);
         }
-        if (video && (video as any).player) {
-          (video as any).player.volume(volume);
-          console.log(`[Player] setVolume: set video volume to ${volume} for ${elementId}`);
+        if (video) {
+          video.volume = volume;
         }
         if (!audio && !video) {
-          console.warn(`[Player] setVolume: element ${elementId} not found in audio or video registry`);
+          console.warn(`[Player] setVolume: element ${elementId} not found`);
         }
       },
       setSpeed: (elementId, rate) => {
-        console.log(`[Player] setSpeed called for element: ${elementId}, rate: ${rate}`);
         const video = videoElementsRef.current.get(elementId);
-        if (video && (video as any).player) {
-          (video as any).player.playbackRate(rate);
-          console.log(`[Player] setSpeed: set playback rate to ${rate} for ${elementId}`);
+        if (video) {
+          video.playbackRate = rate;
         } else {
-          console.warn(`[Player] setSpeed: video element ${elementId} not found or has no player`);
+          console.warn(`[Player] setSpeed: video element ${elementId} not found`);
         }
       },
       project,
-    }),
-    [project.scenes]
-  );
+    };
+
+  // Issue 3 fix: Extract active scene ID as scalar to prevent mid-transition resets
+  const activeSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
 
   // Live interaction-driven overrides clear when the scene changes (a fresh
   // scene starts clean). The idle attract-reset remounts the Player, which also
@@ -165,8 +233,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
   );
 
   // Clear binding cache when project changes (BEFORE render uses it).
-  // Must happen during render, not in effect (effect runs after render, too late).
-  useMemo(() => {
+  // useLayoutEffect runs synchronously after DOM mutations but before browser paint.
+  // This ensures cache clears before elements render with bindings.
+  useLayoutEffect(() => {
     bindingHost.clearCache();
   }, [project]);
 
@@ -175,20 +244,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
   const resolveBindings = bindingContext.useBindings();
   const getOverrides = useOverrides();
 
-  if (!scene) return <FatalMessage text="Project has no scenes." />;
-
-  // Determine if background is a color or an image path
-  const isColor = !scene.background || scene.background.startsWith('#');
-
-  // Build background style
-  const backgroundStyle: React.CSSProperties = isColor
-    ? { background: scene.background }
-    : {
-        backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
-        backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
-        backgroundPosition: scene.backgroundPosition || 'center',
-        backgroundRepeat: 'no-repeat',
-      };
+  if (sceneLayers.length === 0) return <FatalMessage text="Project has no scenes." />;
 
   const onAudioRef = useCallback((elementId: string, ref: HTMLAudioElement | null) => {
     if (ref) {
@@ -214,35 +270,57 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
   }, []);
 
   return (
-    <ScaledStage width={project.width} height={project.height}>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          ...backgroundStyle,
-          overflow: "hidden",
-        }}
-      >
-        {scene.elements.map((el) => {
-          // Bindings first (live data), then interaction overrides on top.
-          const resolved = live
-            ? applyOverrides(resolveBindings(el), getOverrides(el.id))
-            : el;
-          return (
-            <ElementRenderer
-              key={el.id}
-              element={resolved}
-              onTap={handleTap}
-              onHover={handleHover}
-              onHoverEnd={handleHoverEnd}
-              assetBaseUrl={assetBaseUrl}
-              playing
-              onAudioRef={onAudioRef}
-              onVideoRef={onVideoRef}
-            />
-          );
-        })}
-      </div>
+    <ScaledStage width={project.width} height={project.height} stageRef={stageRef}>
+      {sceneLayers.map((layer) => {
+        const { scene, key } = layer;
+
+        // Issue 4 fix: Apply explicit fallback to prevent undefined backgrounds
+        const background = scene.background || "#000000";
+        const isColor = background.startsWith('#');
+
+        // Build background style
+        const backgroundStyle: React.CSSProperties = isColor
+          ? { background }
+          : {
+              backgroundImage: `url(${resolveSrc(background, assetBaseUrl)})`,
+              backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
+              backgroundPosition: scene.backgroundPosition || 'center',
+              backgroundRepeat: 'no-repeat',
+            };
+
+        return (
+          <div
+            key={key}
+            data-scene-container
+            style={{
+              position: "absolute",
+              inset: 0,
+              ...backgroundStyle,
+              overflow: "hidden",
+            }}
+          >
+            {scene.elements.map((el) => {
+              // Bindings first (live data), then interaction overrides on top.
+              const resolved = live
+                ? applyOverrides(resolveBindings(el), getOverrides(el.id))
+                : el;
+              return (
+                <ElementRenderer
+                  key={el.id}
+                  element={resolved}
+                  onTap={handleTap}
+                  onHover={handleHover}
+                  onHoverEnd={handleHoverEnd}
+                  assetBaseUrl={assetBaseUrl}
+                  playing
+                  onAudioRef={onAudioRef}
+                  onVideoRef={onVideoRef}
+                />
+              );
+            })}
+          </div>
+        );
+      })}
     </ScaledStage>
   );
 }
@@ -254,10 +332,12 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true }: P
 function ScaledStage({
   width,
   height,
+  stageRef,
   children,
 }: {
   width: number;
   height: number;
+  stageRef: React.RefObject<HTMLDivElement>;
   children: React.ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -290,6 +370,7 @@ function ScaledStage({
       }}
     >
       <div
+        ref={stageRef}
         style={{
           width,
           height,

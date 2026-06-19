@@ -40,6 +40,18 @@ A trigger (tap, hover, press, enterScene, dataChanged) paired with a sequence of
 
 Actions write to an **override store** (ephemeral, runtime-only mutations). Overrides apply on top of bindings and reset on scene change.
 
+### Transition
+
+The visual effect that plays when entering a Scene. Attached to the destination scene (scene-inbound), not to the `goToScene` action that triggered navigation. When a user taps a button to navigate, the transition defined on the *target* scene determines how it appears.
+
+**Types:** none (instant cut), fade, slide, push, zoom. Each type has configurable parameters (direction, duration, elementsOnly).
+
+**elementsOnly mode:** When true, only the scene's elements participate in the transition animation — the background stays constant. Used when consecutive scenes share the same background and you want a cleaner transition (fade elements out → swap background imperceptibly → fade new elements in). Only supported on `fade` and `zoom` transitions.
+
+**Default behavior:** When a Scene has no transition field or `type: "none"`, scenes swap instantly (no animation). The first scene on project load never transitions — it appears immediately regardless of its transition configuration.
+
+**Not** an Action — Actions are trigger-driven behaviors on Elements. Transitions are presentation-level effects on Scenes. The timing is: goToScene called → transition animates (Player locked, further goToScene ignored) → transition completes → enterScene triggers fire on the new scene's elements.
+
 ### Data Source
 External data connector (REST, MQTT, WebSocket, serial, BLE, file). Lives in the Project schema; connectors run in the main process and push values to the renderer via IPC.
 
@@ -55,6 +67,26 @@ External data connector (REST, MQTT, WebSocket, serial, BLE, file). Lives in the
 - **Editor** (`apps/desktop`): Zustand store for project mutations, undo/redo, Canvas with drag/snap
 - **Player** (`packages/engine`): Read-only renderer, executes interactions, subscribes to bindings
 - Both share the same Scene Model (schema.ts) and rendering primitives (ElementRenderer)
+
+### Undo/Redo System (2026-06)
+
+**Model:** Snapshot-based history (full Project clones). Every mutation captured after 50ms debounce. 50-entry FIFO cap (~2.5-5MB memory).
+
+**Lifecycle:**
+- **On save:** Clear `undoHistory[]`, reset index to -1. Save = checkpoint, wipe history.
+- **On project load:** Clear history (prevent mixing projects).
+- **On edit:** Capture snapshot, `dirty: true`.
+- **On undo/redo to empty history:** `dirty: false` (empty = clean slate).
+
+**Dirty tracking:** `dirty = undoHistory.length > 0`. Simple invariant: history exists = unsaved changes exist.
+
+**Selection preservation:** After undo/redo, keep `selectedId` if element still exists in restored project. Otherwise clear to null.
+
+**Keyboard shortcuts:** Registered via `useKeyboardShortcuts` hook (Mod+Z, Mod+Shift+Z, Mod+Y). No custom listeners, no stale ref bugs.
+
+**Drag optimization:** Pause history capture during pointer drag (pointerdown → pointerup), resume with forced final snapshot. Prevents 100s of micro-move snapshots per drag.
+
+**Files:** `store.ts` (Zustand actions), `useUndoRedo.ts` (capture logic, keyboard wiring, pause/resume).
 
 ### Modularity
 - **Engine** (`packages/engine`): framework-agnostic core (React only in render/, uses plain classes/functions elsewhere)
@@ -152,3 +184,67 @@ const resolved = resolveBindings(element);
 The deviations were **necessary**, not mistakes. Initial design didn't account for React's constraints. The consolidation works, but it's messier than ideal.
 
 **Lesson:** When consolidating React hooks, account for Rules of Hooks (call order, no loops/conditions) and React identity checks (stable references) upfront. Pure functional interfaces (original applyBindings) don't have these constraints—adding React integration changes the design space.
+
+---
+
+## Video Element: Native `<video>` Implementation (2026-06)
+
+### Problem (Video.js Era):
+- Source corruption on repeated src changes (playback failed after multiple updates)
+- Dimension/position bugs (Video.js overrode wrapper styles, required complex workarounds)
+- ~240KB dependency overhead for features not used (controls UI, adaptive streaming, plugins)
+
+### Solution (Native `<video>` Refactor):
+Replaced Video.js with native HTML5 `<video>` element. Wrapper div pattern (matches image/audio):
+
+```jsx
+<div style={baseStyle}>  // positioning + dims
+  {hasSource && (
+    <video src={src} style={{width: "100%", height: "100%"}} />
+  )}
+</div>
+```
+
+**Key implementation details:**
+
+1. **Autoplay race condition fix** - Original effect fired play() before video loaded:
+   ```typescript
+   useEffect(() => {
+     if (video.readyState >= 3) {
+       video.play();  // Already loaded
+     } else {
+       video.addEventListener("canplaythrough", tryPlay, { once: true });
+     }
+   }, [playing, hasSource, src]);
+   ```
+
+2. **Protocol handler MIME types** - Electron's `kioskasset://` protocol returned wrong Content-Type, causing SRC_NOT_SUPPORTED (error code 4). Fixed by explicit MIME headers:
+   ```typescript
+   protocol.handle(ASSET_SCHEME, async (request) => {
+     const ext = extname(absPath).toLowerCase();
+     const mimeMap = { ".mp4": "video/mp4", ".webm": "video/webm", ... };
+     return new Response(body, {
+       headers: { "Content-Type": mimeMap[ext], "Accept-Ranges": "bytes" }
+     });
+   });
+   ```
+
+3. **Conditional render guard** - Don't mount `<video>` when `src=""` (empty source triggers error):
+   ```jsx
+   {hasSource && <video src={src} />}
+   ```
+
+### Files Modified:
+- `packages/engine/src/render/ElementRenderer.tsx` - VideoElement refactor (~150 lines simpler)
+- `packages/engine/src/render/Player.tsx` - Native HTMLVideoElement API (play/pause/seek/volume/speed)
+- `apps/desktop/src/main/index.ts` - Protocol handler MIME + error handling
+- `packages/engine/src/model/factory.ts` - Removed dead props (controls/responsive/fluid)
+- `apps/desktop/src/renderer/editor/PropertiesPanel.tsx` - Removed controls checkbox
+- `docs/adr/0002-native-video-element.md` - Decision record
+
+### Result:
+- ✅ No corruption on rapid src changes
+- ✅ Dimensions/positioning work correctly (wrapper pattern)
+- ✅ ~240KB smaller bundle
+- ✅ Consistent element architecture (wrapper + fill, like image/audio)
+- ✅ Same programmatic API surface (play/pause/seek via interactions)

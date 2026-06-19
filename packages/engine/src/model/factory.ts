@@ -41,11 +41,8 @@ const TYPE_DEFAULTS: Record<
       loop: true,
       muted: true,
       volume: 1.0,
-      controls: true,
       playbackRate: 1.0,
       preload: "auto",
-      responsive: true,
-      fluid: false,
     },
   },
   audio: {

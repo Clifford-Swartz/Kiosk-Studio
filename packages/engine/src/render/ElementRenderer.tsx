@@ -1,8 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Element } from "../model/types.js";
 import { CollectionRenderer } from "./collections/CollectionRenderer.js";
-import videojs from "video.js";
-import "video.js/dist/video-js.css";
 
 export interface ElementRendererProps {
   element: Element;
@@ -51,9 +49,14 @@ export function resolveSrc(src: string, base?: string): string {
   // Absolute URLs pass through
   if (/^([a-z]+:)?\/\//i.test(src) || src.startsWith("data:")) return src;
 
-  // Relative paths → join with base
+  // Relative paths → join with base, encoding each segment
   if (!base) return src;
-  return base.endsWith("/") ? base + src : `${base}/${src}`;
+
+  // Split path into segments and encode each (handles spaces, special chars)
+  const segments = src.split("/").map(encodeURIComponent);
+  const encodedSrc = segments.join("/");
+
+  return base.endsWith("/") ? base + encodedSrc : `${base}/${encodedSrc}`;
 }
 
 /**
@@ -453,167 +456,77 @@ interface VideoElementProps {
 }
 
 /**
- * Video.js-powered video element with advanced controls.
- * Supports standard video formats (mp4, webm) and adaptive streaming (HLS m3u8).
+ * Native HTML5 video element with programmatic control.
+ * Supports standard video formats (mp4, webm, ogg).
  */
 function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playerRef = useRef<ReturnType<typeof videojs> | null>(null);
+  const [hasError, setHasError] = useState(false);
   const { props } = element;
 
   const src = resolveSrc(str(props.src, ""), assetBaseUrl);
-
-  useEffect(() => {
-    const rawSrc = str(props.src, "");
-    //Is DOM Cache Cleared?
-    console.log(`[VideoElement ${element.id}] Init effect triggered`, {
-      hasVideoRef: !!videoRef.current,
-      isInDOM: videoRef.current ? document.contains(videoRef.current) : false,
-      src,
-      assetBaseUrl,
-      rawSrc,
-      playing,
-    });
-
-    if (!videoRef.current) {
-      console.warn(`[VideoElement ${element.id}] No video ref, skipping init`);
-      return;
-    }
-
-
-    console.log(`[VideoElement ${element.id}] Initializing Video.js player`, {
-      src,
-      detectedType: detectVideoType(src),
-      controls: bool(props.controls, true),
-      autoplay: bool(props.autoplay, true) && playing,
-      muted: bool(props.muted, true),
-    });
-
-    // Test 1.2: Check video element state before init
-    console.log('Video element state before init:', {
-      src: videoRef.current.src,
-      error: videoRef.current.error,
-      networkState: videoRef.current.networkState,
-      readyState: videoRef.current.readyState,
-      classList: Array.from(videoRef.current.classList),
-    });
-
-    // Check if Video.js already initialized this element (React Strict Mode double-invoke)
-    let player = videoRef.current && (videoRef.current as any).player;
-
-    if (player && !player.isDisposed()) {
-      console.log(`[VideoElement ${element.id}] Reusing existing Video.js player`);
-      playerRef.current = player;
-    } else {
-      // Clean up any stale Video.js data attributes
-      if (videoRef.current) {
-        videoRef.current.removeAttribute('data-vjs-player');
-        const vjsId = videoRef.current.id;
-        if (vjsId && vjsId.startsWith('vjs_video_')) {
-          videoRef.current.id = '';
-        }
-      }
-
-      // Reset video element state before Video.js init to clear any cached codec/error state
-      videoRef.current.src = '';
-      videoRef.current.removeAttribute('src');
-      const sourceElements = videoRef.current.querySelectorAll('source');
-      sourceElements.forEach(s => s.remove());
-      videoRef.current.load();
-      console.log('Video element reset before Video.js init');
-
-      // Initialize Video.js player
-      player = videojs(videoRef.current, {
-        controls: bool(props.controls, true),
-        autoplay: bool(props.autoplay, true) && playing,
-        loop: bool(props.loop, true),
-        muted: bool(props.muted, true),
-        preload: str(props.preload, "auto") as "auto" | "metadata" | "none",
-        responsive: bool(props.responsive, true),
-        fluid: bool(props.fluid, false),
-        playbackRates: [0.5, 1, 1.5, 2],
-      });
-
-      console.log(`[VideoElement ${element.id}] Video.js player created successfully`);
-
-      // Set initial volume and speed
-      player.volume(num(props.volume, 1));
-      player.playbackRate(num(props.playbackRate, 1));
-
-      // Store player reference on the video element for programmatic control
-      playerRef.current = player;
-      (videoRef.current as any).player = player;
-    }
-
-    // Register video element ref with Player
-    onVideoRef?.(element.id, videoRef.current);
-    console.log(`[VideoElement ${element.id}] Registered with Player context`);
-
-    // Cleanup: unregister from Player context
-    // NOTE: We intentionally don't dispose the player here to handle React Strict Mode
-    // double-invoke in dev. The init code above checks for existing players and reuses them.
-    return () => {
-      console.log(`[VideoElement ${element.id}] Cleanup: unregistering`);
-      onVideoRef?.(element.id, null);
-    };
-  }, [element.id, playing, onVideoRef]);
-
-  // Sync props with player when they change
-  useEffect(() => {
-    if (!playerRef.current) return;
-
-    console.log(`[VideoElement ${element.id}] Syncing props`, {
-      volume: num(props.volume, 1),
-      playbackRate: num(props.playbackRate, 1),
-      muted: bool(props.muted, true),
-      loop: bool(props.loop, true),
-    });
-
-    playerRef.current.volume(num(props.volume, 1));
-    playerRef.current.playbackRate(num(props.playbackRate, 1));
-    playerRef.current.muted(bool(props.muted, true));
-    playerRef.current.loop(bool(props.loop, true));
-  }, [props.volume, props.playbackRate, props.muted, props.loop]);
-
-  // Update source when it changes
-  useEffect(() => {
-    if (!playerRef.current || !src) {
-      console.log(`[VideoElement ${element.id}] Source update skipped`, {
-        hasPlayer: !!playerRef.current,
-        src,
-      });
-      return;
-    }
-
-    console.log(`[VideoElement ${element.id}] Updating source`, {
-      src,
-      type: detectVideoType(src),
-    });
-
-    playerRef.current.src({
-      src: src,
-      type: detectVideoType(src),
-    });
-  }, [src]);
-
   const rawSrc = str(props.src, "");
   const hasSource = rawSrc && rawSrc.trim() !== "";
 
+  // Register video ref with Player
+  useEffect(() => {
+    onVideoRef?.(element.id, videoRef.current);
+    return () => onVideoRef?.(element.id, null);
+  }, [element.id, onVideoRef]);
+
+  // Handle autoplay when playing prop changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playing || !bool(props.autoplay, true) || !hasSource) return;
+
+    const tryPlay = () => {
+      video.play().catch((err) => {
+        console.warn(`[VideoElement ${element.id}] Autoplay blocked:`, err);
+      });
+    };
+
+    // If video already loaded enough data, play immediately
+    if (video.readyState >= 3) {
+      tryPlay();
+    } else {
+      // Otherwise wait for canplaythrough event
+      video.addEventListener("canplaythrough", tryPlay, { once: true });
+      return () => video.removeEventListener("canplaythrough", tryPlay);
+    }
+  }, [element.id, playing, props.autoplay, hasSource, src]);
+
   return (
-    <div
-      data-vjs-player
-      style={baseStyle}
-    >
-      <video
-        ref={videoRef}
-        className="video-js vjs-big-play-centered"
-        playsInline
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
-        }}
-      />
+    <div style={baseStyle}>
+      {hasSource && (
+        <video
+          ref={videoRef}
+          src={src}
+          autoPlay={bool(props.autoplay, true) && playing}
+          loop={bool(props.loop, true)}
+          muted={bool(props.muted, true)}
+          playsInline
+          preload={str(props.preload, "auto") as "auto" | "metadata" | "none"}
+          onError={(e) => {
+            const video = e.currentTarget;
+            const errorCode = video.error?.code;
+            const errorMsg = video.error?.message;
+            console.error(`[VideoElement ${element.id}] Load error:`, {
+              src: rawSrc,
+              resolvedSrc: src,
+              errorCode,
+              errorMsg,
+              codes: { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" },
+            });
+            setHasError(true);
+          }}
+          onLoadStart={() => setHasError(false)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+          }}
+        />
+      )}
       {!hasSource && (
         <div
           style={{
@@ -632,6 +545,24 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
           🎬 No video source
         </div>
       )}
+      {hasError && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#1e293b",
+            color: "#64748b",
+            fontSize: 24,
+            fontFamily: "system-ui, sans-serif",
+            pointerEvents: "none",
+          }}
+        >
+          ⚠️ Video failed to load
+        </div>
+      )}
     </div>
   );
 }
@@ -640,23 +571,6 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
  * Detect MIME type from file extension.
  * Supports: mp4, webm, ogg, m3u8 (HLS), mpd (DASH).
  */
-function detectVideoType(src: string): string {
-  const ext = src.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'mp4':
-      return 'video/mp4';
-    case 'webm':
-      return 'video/webm';
-    case 'ogg':
-      return 'video/ogg';
-    case 'm3u8':
-      return 'application/x-mpegURL';
-    case 'mpd':
-      return 'application/dash+xml';
-    default:
-      return 'video/mp4';
-  }
-}
 
 // --- text element (per-line rich text + autofit) ----------------------------
 

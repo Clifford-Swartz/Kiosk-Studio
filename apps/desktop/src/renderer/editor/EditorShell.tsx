@@ -28,6 +28,9 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
 
   const selectedId = useEditor((s) => s.selectedId);
   const removeElement = useEditor((s) => s.removeElement);
+  const copyElement = useEditor((s) => s.copyElement);
+  const cutElement = useEditor((s) => s.cutElement);
+  const pasteElement = useEditor((s) => s.pasteElement);
 
   // Register keyboard shortcuts for editor actions
   useKeyboardShortcuts({
@@ -46,6 +49,26 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
     "Mod+S": {
       action: () => onSave(),
       description: "Save project",
+      preventDefault: true,
+      log: true,
+    },
+    "Mod+C": {
+      action: () => copyElement(),
+      enabled: () => !!selectedId,
+      description: "Copy selected element",
+      preventDefault: true,
+      log: true,
+    },
+    "Mod+X": {
+      action: () => cutElement(),
+      enabled: () => !!selectedId,
+      description: "Cut selected element",
+      preventDefault: true,
+      log: true,
+    },
+    "Mod+V": {
+      action: () => pasteElement(),
+      description: "Paste element from clipboard",
       preventDefault: true,
       log: true,
     },

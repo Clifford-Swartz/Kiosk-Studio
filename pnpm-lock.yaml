@@ -81,9 +81,6 @@ importers:
 
   packages/engine:
     dependencies:
-      video.js:
-        specifier: ^8.23.7
-        version: 8.23.7
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -91,9 +88,6 @@ importers:
       '@types/react':
         specifier: ^18.3.3
         version: 18.3.29
-      '@types/video.js':
-        specifier: ^7.3.58
-        version: 7.3.58
       react:
         specifier: ^18.3.1
         version: 18.3.1

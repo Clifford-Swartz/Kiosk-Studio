@@ -252,14 +252,6 @@ function TypeFields({
             </select>
           </Row>
 
-          <Row label="Controls">
-            <input
-              type="checkbox"
-              checked={bool(p.controls, true)}
-              onChange={(e) => set("controls", e.target.checked)}
-            />
-          </Row>
-
           <Row label="Autoplay">
             <input
               type="checkbox"
@@ -498,6 +490,90 @@ function SceneSettings() {
           >
             ✕ Remove image
           </button>
+        </>
+      )}
+
+      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "14px 2px 4px" }}>
+        Scene transition (entrance effect)
+      </div>
+
+      <Row label="Type">
+        <select
+          value={scene.transition?.type ?? "none"}
+          onChange={(e) => {
+            const type = e.target.value as "none" | "fade" | "slide" | "push" | "zoom";
+            if (type === "none") {
+              updateActiveScene({ transition: undefined });
+            } else {
+              updateActiveScene({
+                transition: {
+                  type,
+                  duration: scene.transition?.duration ?? 300,
+                  direction: scene.transition?.direction ?? "left",
+                  elementsOnly: scene.transition?.elementsOnly ?? false,
+                },
+              });
+            }
+          }}
+          style={input}
+        >
+          <option value="none">None (instant)</option>
+          <option value="fade">Fade</option>
+          <option value="slide">Slide</option>
+          <option value="push">Push</option>
+          <option value="zoom">Zoom</option>
+        </select>
+      </Row>
+
+      {scene.transition && scene.transition.type !== "none" && (
+        <>
+          <Row label="Duration (ms)">
+            <Num
+              value={scene.transition.duration ?? 300}
+              onChange={(v) =>
+                updateActiveScene({
+                  transition: { ...scene.transition!, duration: Number(v) },
+                })
+              }
+            />
+          </Row>
+
+          {(scene.transition.type === "slide" || scene.transition.type === "push") && (
+            <Row label="Direction">
+              <select
+                value={scene.transition.direction ?? "left"}
+                onChange={(e) =>
+                  updateActiveScene({
+                    transition: {
+                      ...scene.transition!,
+                      direction: e.target.value as "up" | "down" | "left" | "right",
+                    },
+                  })
+                }
+                style={input}
+              >
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+                <option value="up">Up</option>
+                <option value="down">Down</option>
+              </select>
+            </Row>
+          )}
+
+          {(scene.transition.type === "fade" || scene.transition.type === "zoom") && (
+            <Row label="Elements only">
+              <input
+                type="checkbox"
+                checked={scene.transition.elementsOnly ?? false}
+                onChange={(e) =>
+                  updateActiveScene({
+                    transition: { ...scene.transition!, elementsOnly: e.target.checked },
+                  })
+                }
+                title="Transition only the elements, not the background"
+              />
+            </Row>
+          )}
         </>
       )}
 

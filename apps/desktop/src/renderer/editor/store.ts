@@ -31,6 +31,8 @@ export interface EditorState {
   dirty: boolean;
   /** Editor UI: snap-to-guides on/off (not part of the saved project). */
   snapEnabled: boolean;
+  /** Clipboard: holds a copy of the last copied/cut element. */
+  clipboard: Element | null;
 
   // --- selectors (derived) ---
   activeScene: () => Scene;
@@ -56,6 +58,11 @@ export interface EditorState {
   /** Reorder by moving element `id` to a new index in the scene's array. */
   reorderElement: (id: string, toIndex: number) => void;
   selectElement: (id: string | null) => void;
+
+  // --- clipboard ops ---
+  copyElement: () => void;
+  cutElement: () => void;
+  pasteElement: () => void;
 
   // --- editor ui ---
   toggleSnap: () => void;
@@ -116,6 +123,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   filePath: null,
   dirty: false,
   snapEnabled: true,
+  clipboard: null,
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
 
@@ -239,6 +247,41 @@ export const useEditor = create<EditorState>((set, get) => ({
     })),
 
   selectElement: (id) => set({ selectedId: id }),
+
+  // --- clipboard ops ---
+  copyElement: () => {
+    const { selectedId, activeScene } = get();
+    if (!selectedId) return;
+    const el = activeScene().elements.find((e) => e.id === selectedId);
+    if (el) set({ clipboard: el });
+  },
+
+  cutElement: () => {
+    const { selectedId, copyElement, removeElement } = get();
+    if (!selectedId) return;
+    copyElement();
+    removeElement(selectedId);
+  },
+
+  pasteElement: () => {
+    const { clipboard } = get();
+    if (!clipboard) return;
+    // Clone element with new ID, offset by 20px so not stacked directly on top
+    const cloned: Element = {
+      ...clipboard,
+      id: newId("el"),
+      x: clipboard.x + 20,
+      y: clipboard.y + 20,
+    };
+    set((state) => ({
+      project: withActiveScene(state, (scene) => ({
+        ...scene,
+        elements: [...scene.elements, cloned],
+      })),
+      selectedId: cloned.id,
+      dirty: true,
+    }));
+  },
 
   addScene: () =>
     set((state) => {

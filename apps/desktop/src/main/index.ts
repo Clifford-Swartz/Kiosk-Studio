@@ -414,12 +414,67 @@ app.whenReady().then(() => {
   // Serve project assets via the privileged scheme. The pathname is a
   // uri-encoded absolute file path; stream it back. Constrain to existing
   // files only (net.fetch of a file URL handles missing files as errors).
-  protocol.handle(ASSET_SCHEME, (request) => {
+  protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
     // kioskasset://load/<encoded-abs-path>  -> decode the path after the host.
     const encoded = url.pathname.replace(/^\/+/, "");
     const absPath = normalize(decodeURIComponent(encoded));
-    return net.fetch(pathToFileURL(absPath).toString());
+    const fileUrl = pathToFileURL(absPath).toString();
+
+    console.log(`[${ASSET_SCHEME}] Request: ${request.url}`);
+    console.log(`[${ASSET_SCHEME}] Decoded path: ${absPath}`);
+    console.log(`[${ASSET_SCHEME}] File URL: ${fileUrl}`);
+
+    try {
+      // Forward Range header for video seeking/streaming
+      const fetchHeaders = new Headers();
+      const range = request.headers.get("range");
+      if (range) {
+        fetchHeaders.set("Range", range);
+        console.log(`[${ASSET_SCHEME}] Range request: ${range}`);
+      }
+
+      const response = await net.fetch(fileUrl, { headers: fetchHeaders });
+      console.log(`[${ASSET_SCHEME}] Fetch success: ${response.status}`);
+
+      // Ensure correct MIME type based on file extension
+      const ext = extname(absPath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+      };
+      const contentType = mimeMap[ext] || response.headers.get("content-type") || "application/octet-stream";
+      console.log(`[${ASSET_SCHEME}] Content-Type: ${contentType}`);
+
+      // Copy all relevant headers from original response
+      const headers = new Headers();
+      headers.set("Content-Type", contentType);
+      headers.set("Accept-Ranges", "bytes");
+
+      // Preserve original Content-Length and Range headers if present
+      const contentLength = response.headers.get("content-length");
+      if (contentLength) headers.set("Content-Length", contentLength);
+
+      const contentRange = response.headers.get("content-range");
+      if (contentRange) headers.set("Content-Range", contentRange);
+
+      return new Response(response.body, {
+        status: response.status,
+        headers,
+      });
+    } catch (err) {
+      console.error(`[${ASSET_SCHEME}] Failed to load ${absPath}:`, err);
+      return new Response("Not Found", { status: 404 });
+    }
   });
 
   // app:// scheme serves bundled resources (audio-icon.png, placeholder.png, etc.)
