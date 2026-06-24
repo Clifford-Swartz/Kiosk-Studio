@@ -155,6 +155,7 @@ function TypeFields({
           <Row label="Label"><Text value={str(p.label, "Button")} onChange={(v) => set("label", v)} /></Row>
           <Row label="Fill"><Color value={str(p.fill, "#2563eb")} onChange={(v) => set("fill", v)} /></Row>
           <Row label="Text"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
+          <Row label="Radius"><Num value={n(p.radius, 12)} onChange={(v) => set("radius", Number(v))} /></Row>
         </>
       );
     case "image":
@@ -585,7 +586,7 @@ function SceneSettings() {
   );
 }
 
-type CollItem = { id: string; title?: string; subtitle?: string; image?: string };
+type CollItem = { id: string; title?: string; subtitle?: string; image?: string; thumbnail?: string };
 
 /** Properties for a collection: layout + knobs + the static items editor. */
 function CollectionFields({
@@ -603,7 +604,7 @@ function CollectionFields({
   const patchItem = (id: string, patch: Partial<CollItem>) =>
     setItems(list.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   const addItem = () =>
-    setItems([...list, { id: `i${Date.now().toString(36)}`, title: "New item", subtitle: "", image: "" }]);
+    setItems([...list, { id: `i${Date.now().toString(36)}`, title: "New item", subtitle: "", image: "", thumbnail: "" }]);
   const removeItem = (id: string) => setItems(list.filter((it) => it.id !== id));
   const moveItem = (id: string, dir: -1 | 1) => {
     const i = list.findIndex((it) => it.id === id);
@@ -621,6 +622,7 @@ function CollectionFields({
           <option value="grid">Grid</option>
           <option value="carousel">Carousel</option>
           <option value="coverflow">Coverflow</option>
+          <option value="wheel">Wheel</option>
           <option value="kenburns">Ken Burns</option>
         </select>
       </Row>
@@ -634,6 +636,40 @@ function CollectionFields({
         <Row label="Interval (ms)"><Num value={n(p.intervalMs, 4000)} onChange={(v) => set("intervalMs", Number(v))} /></Row>
       )}
       <Row label="Item bg"><Color value={str(p.itemBg, "#1e293b")} onChange={(v) => set("itemBg", v)} /></Row>
+
+      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+        Video Settings
+      </div>
+      <Row label="Video muted">
+        <input type="checkbox" checked={bool(p.videoMuted, true)} onChange={(e) => set("videoMuted", e.target.checked)} />
+      </Row>
+      <Row label="Video loop">
+        <input
+          type="checkbox"
+          checked={bool(p.videoLoop, true)}
+          onChange={(e) => {
+            set("videoLoop", e.target.checked);
+            if (e.target.checked && bool(p.advanceOnVideoEnd, false)) {
+              set("advanceOnVideoEnd", false);
+            }
+          }}
+        />
+      </Row>
+      <Row label="Advance on end">
+        <input
+          type="checkbox"
+          checked={bool(p.advanceOnVideoEnd, false)}
+          onChange={(e) => {
+            set("advanceOnVideoEnd", e.target.checked);
+            if (e.target.checked && bool(p.videoLoop, true)) {
+              set("videoLoop", false);
+            }
+          }}
+        />
+      </Row>
+      {bool(p.advanceOnVideoEnd, false) && (
+        <Row label="Delay (ms)"><Num value={n(p.advanceDelayMs, 0)} onChange={(v) => set("advanceDelayMs", Number(v))} /></Row>
+      )}
 
       <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Items ({list.length})
@@ -650,8 +686,8 @@ function CollectionFields({
           </div>
           <input placeholder="Title" value={it.title ?? ""} onChange={(e) => patchItem(it.id, { title: e.target.value })} style={{ ...input, marginBottom: 4 }} />
           <input placeholder="Subtitle" value={it.subtitle ?? ""} onChange={(e) => patchItem(it.id, { subtitle: e.target.value })} style={{ ...input, marginBottom: 4 }} />
-          <div style={{ display: "flex", gap: 4 }}>
-            <input placeholder="image path" value={it.image ?? ""} onChange={(e) => patchItem(it.id, { image: e.target.value })} style={{ ...input, flex: 1 }} />
+          <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+            <input placeholder="focused media path (image or video)" value={it.image ?? ""} onChange={(e) => patchItem(it.id, { image: e.target.value })} style={{ ...input, flex: 1 }} />
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
@@ -660,8 +696,24 @@ function CollectionFields({
                 const rel = await importPickedImage(picked);
                 if (rel) patchItem(it.id, { image: rel });
               }}
+              title="Choose focused image or video"
             >
-              🖼
+              🎬
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <input placeholder="thumbnail (grid view)" value={it.thumbnail ?? ""} onChange={(e) => patchItem(it.id, { thumbnail: e.target.value })} style={{ ...input, flex: 1 }} />
+            <button
+              style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
+              onClick={async () => {
+                const picked = await window.kiosk.pickImage();
+                if (!picked) return;
+                const rel = await importPickedImage(picked);
+                if (rel) patchItem(it.id, { thumbnail: rel });
+              }}
+              title="Choose thumbnail image"
+            >
+              🖼️
             </button>
           </div>
         </div>

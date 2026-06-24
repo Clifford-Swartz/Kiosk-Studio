@@ -251,7 +251,7 @@ async function fileExists(path: string): Promise<boolean> {
 /** Normalize an extension from a filename, defaulting to .png. */
 function imageExt(name: string): string {
   const ext = extname(name).toLowerCase();
-  return /^\.(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext) ? ext : ".png";
+  return /^\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|ogg)$/.test(ext) ? ext : ".png";
 }
 
 /**
@@ -334,9 +334,13 @@ async function copyExternalFile(
  */
 async function pickImage(): Promise<{ name: string; base64: string } | null> {
   const result = await dialog.showOpenDialog({
-    title: "Choose image",
+    title: "Choose media (image or video)",
     properties: ["openFile"],
-    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] }],
+    filters: [
+      { name: "Images & Videos", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm", "mov", "ogg"] },
+      { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] },
+      { name: "Videos", extensions: ["mp4", "webm", "mov", "ogg"] },
+    ],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const filePath = result.filePaths[0]!;

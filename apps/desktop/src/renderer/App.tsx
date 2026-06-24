@@ -101,6 +101,28 @@ export function App() {
     }
   }
 
+  async function handleSaveAs() {
+    try {
+      // Clone project and strip sentinel values before saving
+      const normalized = JSON.parse(JSON.stringify(project));
+
+      for (const scene of normalized.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && element.props.src === "__placeholder__") {
+            element.props.src = ""; // Save as empty, not sentinel
+          }
+        }
+      }
+
+      const text = JSON.stringify(normalized, null, 2);
+      // Always pass undefined to force the save dialog
+      const path = await window.kiosk.saveProject(text, undefined);
+      if (path) markSaved(path);
+    } catch (err) {
+      window.alert(`Save As failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function handleOpen() {
     try {
       const path = await window.kiosk.pickProject();
@@ -191,7 +213,7 @@ export function App() {
 
     return (
       <div style={{ position: "absolute", inset: 0 }}>
-        <Player project={validated} assetBaseUrl={projectAssetBase(filePath)} />
+        <Player project={validated} assetBaseUrl={projectAssetBase(filePath)} hideAudioIcons={true} />
         <button onClick={handleExitPlayer} style={backToEditor}>
           ✕ Exit preview
         </button>
@@ -204,6 +226,7 @@ export function App() {
       onPlay={() => setMode("player")}
       onKiosk={handleKiosk}
       onSave={handleSave}
+      onSaveAs={handleSaveAs}
       onOpen={handleOpen}
       onImportPptx={handleImportPptx}
     />

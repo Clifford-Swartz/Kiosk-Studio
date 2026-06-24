@@ -15,6 +15,16 @@ A visual or interactive component on a Scene. Types: rectangle, text, image, vid
 - **Bindings**: connections to live data sources that update props in real-time
 - **Interactions**: trigger → action mappings (e.g., tap → goToScene)
 
+### Collection
+A templated set of items (images and videos) laid out in a chosen style: **grid**, **carousel**, **coverflow**, or **kenburns**. Each `CollectionItem` has a media source (image or video), optional title, and optional subtitle.
+
+**Active item model:** One item is "active" at any time. For video items, the active video auto-plays; all inactive videos pause and reset to the beginning. The active item is determined by layout:
+- **Grid**: User taps a card to make it active (enters focused state—card fills collection bounds). Tap again to unfocus (return to grid).
+- **Carousel/Coverflow**: Active item is centered/featured. Users navigate via swipe gestures or nav buttons.
+- **Ken Burns**: Active item shown fullscreen. Auto-advances on timer or when video ends.
+
+**Video orchestration:** Collections manage video playback internally (active plays, others paused + muted). Collection videos don't register with the Player—they're not targetable by interactions like standalone video elements are.
+
 ### Binding
 A connection from a data source to an element property. Live data flows through bindings to update rendered elements without mutating the Project.
 
@@ -32,7 +42,7 @@ Previously scattered across: bindingStore (subscription) + applyBindings (resolu
 
 ### Interaction
 A trigger (tap, hover, press, enterScene, dataChanged) paired with a sequence of actions. Actions can:
-- Navigate: `goToScene`
+- Navigate: `goToScene`, `goBack`
 - Mutate props: `setProp`, `toggle`
 - Control media: `playMedia`, `togglePlayPause`, `seekVideo`, `setVolume`, `setSpeed`
 - Send data: `sendData` (reserved)
@@ -54,6 +64,24 @@ The visual effect that plays when entering a Scene. Attached to the destination 
 
 ### Data Source
 External data connector (REST, MQTT, WebSocket, serial, BLE, file). Lives in the Project schema; connectors run in the main process and push values to the renderer via IPC.
+
+### Back and Home Buttons
+Optional overlay navigation controls in the runtime Player. When enabled via project-level flags (`enableBackButton`, `enableHomeButton`), circular icon buttons render in the bottom-left corner on top of scene content (max z-index). Both buttons are hidden on the home scene. Only visible in Play/Kiosk mode, not in the editor Canvas preview.
+
+**Back button** (`◀`): Navigates to the previous scene by popping the Navigation History stack. Implemented as a `goBack` action type. Hidden when Navigation History is empty (no previous scenes to return to).
+
+**Home button** (`⌂`): Navigates to the home scene (project's `startSceneId` or first scene as fallback). Uses the existing `goToScene` action internally, not a special action type.
+
+**Visual specs:** 50×50px circular buttons, dark semi-transparent background (`rgba(0,0,0,0.6)`), white icons (24px), 8px vertical gap between them, 20px margin from viewport edges. Hover brightness feedback on desktop. No animation on show/hide (instant conditional render).
+
+### Navigation History
+Stack of scene IDs tracking the user's navigation path through the kiosk. Maintained in Player component state during runtime. Used by the Back button to enable "undo last navigation" behavior.
+
+**Push behavior:** Every `goToScene` call pushes the current scene ID to the stack before navigating, UNLESS the destination is the home scene. Internal flag prevents re-pushing when `goBack` action calls `goToScene`.
+
+**Clear behavior:** Stack automatically clears (resets to empty array) when arriving at the home scene by any means: back button navigation, home button tap, `goToScene` action targeting home, or initial project load.
+
+**No size cap:** Unlimited stack depth (each entry is a scene ID string, ~36 bytes). Resets on Player unmount (exiting Play/Kiosk mode).
 
 ## Architecture Patterns
 

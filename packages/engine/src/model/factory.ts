@@ -69,9 +69,9 @@ const TYPE_DEFAULTS: Record<
       titleColor: "#f8fafc",
       subtitleColor: "#94a3b8",
       items: [
-        { id: "i1", title: "Item One", subtitle: "Subtitle", image: "" },
-        { id: "i2", title: "Item Two", subtitle: "Subtitle", image: "" },
-        { id: "i3", title: "Item Three", subtitle: "Subtitle", image: "" },
+        { id: "i1", title: "Item One", subtitle: "Subtitle", image: "", thumbnail: "" },
+        { id: "i2", title: "Item Two", subtitle: "Subtitle", image: "", thumbnail: "" },
+        { id: "i3", title: "Item Three", subtitle: "Subtitle", image: "", thumbnail: "" },
       ],
     },
   },
@@ -123,5 +123,7 @@ export function createProject(partial: Partial<Project> = {}): Project {
     startSceneId: partial.startSceneId ?? scenes[0]?.id,
     scenes,
     dataSources: partial.dataSources ?? [],
+    enableBackButton: partial.enableBackButton ?? false,
+    enableHomeButton: partial.enableHomeButton ?? false,
   };
 }

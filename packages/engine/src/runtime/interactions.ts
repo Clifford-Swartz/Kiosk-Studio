@@ -7,6 +7,7 @@ import type { Action, Interaction, Project } from "../model/types.js";
  */
 export interface PlayerContext {
   goToScene: (sceneId: string) => void;
+  goBack: () => void;
   setProp: (elementId: string, key: string, value: unknown) => void;
   toggleVisibility: (elementId: string) => void;
   playAudio: (elementId: string) => void;
@@ -33,6 +34,11 @@ function runAction(action: Action, ctx: PlayerContext): void {
       } else {
         warn("goToScene action missing string params.sceneId");
       }
+      return;
+    }
+
+    case "goBack": {
+      ctx.goBack();
       return;
     }
 

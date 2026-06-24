@@ -273,6 +273,7 @@ function getEditableProps(type: string): { key: string; label: string; valueType
         { key: "label", label: "Label", valueType: "text" },
         { key: "fill", label: "Fill Color", valueType: "color" },
         { key: "color", label: "Text Color", valueType: "color" },
+        { key: "radius", label: "Border Radius", valueType: "number" },
       ];
     case "video":
       return [

@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { useEditor } from "./store.js";
 
 /**
@@ -45,10 +44,11 @@ function MenuDropdown({
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, onUndo, onRedo, canUndo, canRedo }: {
+export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onUndo, onRedo, canUndo, canRedo }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
+  onSaveAs: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
   onUndo: () => void;
@@ -57,40 +57,11 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, onUndo, 
   canRedo: boolean;
 }) {
 
-  const project = useEditor((s) => s.project);
-  const activeSceneId = useEditor((s) => s.activeSceneId);
   const dirty = useEditor((s) => s.dirty);
-  const setActiveScene = useEditor((s) => s.setActiveScene);
-  const addScene = useEditor((s) => s.addScene);
-  const renameScene = useEditor((s) => s.renameScene);
-  const removeScene = useEditor((s) => s.removeScene);
   const snapEnabled = useEditor((s) => s.snapEnabled);
   const toggleSnap = useEditor((s) => s.toggleSnap);
   const viewport = useEditor((s) => s.canvasViewport);
   const resetViewport = useEditor((s) => s.resetViewport);
-
-  const active = project.scenes.find((s) => s.id === activeSceneId);
-
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function startRename() {
-    if (!active) return;
-    setDraft(active.name);
-    setRenaming(true);
-  }
-  function commitRename() {
-    if (active && draft.trim()) renameScene(active.id, draft.trim());
-    setRenaming(false);
-  }
-
-  useEffect(() => {
-    if (renaming) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [renaming]);
 
   return (
     <div style={bar}>
@@ -104,54 +75,10 @@ export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, onUndo, 
         options={[
           { label: "Open…", action: onOpen },
           { label: "Save", action: onSave },
+          { label: "Save As…", action: onSaveAs },
           { label: "Import PPTX…", action: onImportPptx },
         ]}
       />
-
-      <MenuDropdown
-        label="Scene"
-        options={[
-          { label: "Add Scene", action: addScene },
-          { label: "Rename Scene", action: startRename },
-          {
-            label: "Delete Scene",
-            action: () => active && removeScene(active.id),
-            disabled: project.scenes.length <= 1,
-          },
-        ]}
-      />
-
-      <div style={{ flex: 1 }} />
-
-      {/* Center: Scene Selector */}
-      <span style={{ color: "#64748b", fontSize: 12, marginRight: 6 }}>Scene</span>
-      {renaming ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") setRenaming(false);
-          }}
-          style={select}
-        />
-      ) : (
-        <select
-          value={activeSceneId}
-          onChange={(e) => setActiveScene(e.target.value)}
-          onDoubleClick={startRename}
-          title="Double-click to rename"
-          style={select}
-        >
-          {project.scenes.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      )}
 
       <div style={{ flex: 1 }} />
 
@@ -248,13 +175,4 @@ const playBtn: React.CSSProperties = {
   borderColor: "#1a274b",
   color: "#fff",
   fontWeight: 600,
-};
-const select: React.CSSProperties = {
-  background: "#161c26",
-  border: "1px solid #232c3a",
-  borderRadius: 6,
-  color: "#e2e8f0",
-  fontSize: 13,
-  padding: "6px 8px",
-  minWidth: 140,
 };

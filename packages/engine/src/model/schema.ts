@@ -39,6 +39,7 @@ export const TriggerKindSchema = z.enum([
 
 export const ActionTypeSchema = z.enum([
   "goToScene",
+  "goBack",
   "setProp",
   "toggle",
   "playMedia",
@@ -209,6 +210,10 @@ export const ProjectSchema = z.object({
   startSceneId: z.string().optional(),
   scenes: z.array(SceneSchema).min(1),
   dataSources: z.array(DataSourceDefSchema).default([]),
+  /** Enable back button in Play/Kiosk mode (project-level navigation UI). */
+  enableBackButton: z.boolean().default(false),
+  /** Enable home button in Play/Kiosk mode (project-level navigation UI). */
+  enableHomeButton: z.boolean().default(false),
 });
 
 /**

@@ -9,7 +9,9 @@ export interface TransitionController {
     scene: Scene,
     containerEl: HTMLElement,
     outgoingEl: HTMLElement,
-    incomingEl: HTMLElement
+    incomingEl: HTMLElement,
+    width: number,
+    height: number
   ): Promise<void>;
   /** Current state (idle | transitioning). */
   readonly state: TransitionState;
@@ -27,7 +29,9 @@ export function createTransitionController(): TransitionController {
       scene: Scene,
       containerEl: HTMLElement,
       outgoingEl: HTMLElement,
-      incomingEl: HTMLElement
+      incomingEl: HTMLElement,
+      width: number,
+      height: number
     ): Promise<void> {
       if (state === "transitioning") {
         console.warn("[TransitionController] Already transitioning, ignoring");
@@ -55,6 +59,8 @@ export function createTransitionController(): TransitionController {
           direction: transition.direction,
           duration: transition.duration || 300,
           elementsOnly: transition.elementsOnly || false,
+          width,
+          height,
         });
       } finally {
         state = "idle";

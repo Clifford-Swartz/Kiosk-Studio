@@ -45,6 +45,12 @@ export interface EditorState {
     panX: number;     // Pan offset in screen pixels
     panY: number;
   };
+  /** Active sidebar tab (scene tools vs project hierarchy). */
+  activeTab: "scene" | "project";
+  /** Collapsed scene IDs in project hierarchy. */
+  collapsedScenes: Set<string>;
+  /** Visual parent overrides (sceneId → parentId) for manual nesting. */
+  visualParents: Map<string, string>;
 
   // --- selectors (derived) ---
   activeScene: () => Scene;
@@ -88,6 +94,10 @@ export interface EditorState {
   setUserZoom: (zoom: number) => void;
   setPan: (panX: number, panY: number) => void;
   resetViewport: () => void;
+  setActiveTab: (tab: "scene" | "project") => void;
+  toggleSceneCollapse: (sceneId: string) => void;
+  setVisualParent: (sceneId: string, parentId: string | null) => void;
+  addChildScene: (parentId: string) => void;
 
   // --- scene ops ---
   addScene: () => void;
@@ -98,6 +108,10 @@ export interface EditorState {
   updateProjectSize: (size: { width?: number; height?: number }) => void;
   removeScene: (id: string) => void;
   setActiveScene: (id: string) => void;
+
+  // --- navigation settings ---
+  setEnableBackButton: (enabled: boolean) => void;
+  setEnableHomeButton: (enabled: boolean) => void;
 
   // --- data sources & bindings (live data) ---
   addDataSource: (kind: DataSourceKind) => string;
@@ -139,7 +153,7 @@ function patchElement(
 
 export const useEditor = create<EditorState>((set, get) => ({
   // Placeholder until loadProject runs; replaced on first render.
-  project: { schemaVersion: 1, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataSources: [] },
+  project: { schemaVersion: 1, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataSources: [], enableBackButton: false, enableHomeButton: false },
   activeSceneId: "",
   selectedId: null,
   filePath: null,
@@ -148,6 +162,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   snapEnabled: true,
   clipboard: null,
   canvasViewport: { userZoom: 1, panX: 0, panY: 0 },
+  activeTab: "scene",
+  collapsedScenes: new Set(),
+  visualParents: new Map(),
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
 
@@ -160,6 +177,47 @@ export const useEditor = create<EditorState>((set, get) => ({
   })),
 
   resetViewport: () => set({ canvasViewport: { userZoom: 1, panX: 0, panY: 0 } }),
+
+  setActiveTab: (tab) => set({ activeTab: tab }),
+
+  toggleSceneCollapse: (sceneId) =>
+    set((state) => {
+      const next = new Set(state.collapsedScenes);
+      if (next.has(sceneId)) {
+        next.delete(sceneId);
+      } else {
+        next.add(sceneId);
+      }
+      return { collapsedScenes: next };
+    }),
+
+  setVisualParent: (sceneId, parentId) =>
+    set((state) => {
+      const next = new Map(state.visualParents);
+      if (parentId === null) {
+        next.delete(sceneId);
+      } else {
+        next.set(sceneId, parentId);
+      }
+      return { visualParents: next };
+    }),
+
+  addChildScene: (parentId) =>
+    set((state) => {
+      const newScene = createScene({ name: `Scene ${state.project.scenes.length + 1}` });
+
+      const scenes = [...state.project.scenes, newScene];
+
+      const visualParents = new Map(state.visualParents);
+      visualParents.set(newScene.id, parentId);
+
+      return {
+        project: { ...state.project, scenes },
+        activeSceneId: newScene.id,
+        visualParents,
+        dirty: true,
+      };
+    }),
 
   activeScene: () => {
     const s = get();
@@ -206,9 +264,13 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   addElement: (type) =>
     set((state) => {
+      const scene = state.activeScene();
+      // Auto-number: count existing elements of this type
+      const count = scene.elements.filter(e => e.type === type).length;
       const el = createElement(type, {
+        name: `${type}${count + 1}`,
         // Stack new elements above existing ones.
-        zIndex: state.activeScene().elements.length + 1,
+        zIndex: scene.elements.length + 1,
       });
       return {
         project: withActiveScene(state, (scene) => ({
@@ -222,9 +284,13 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   addImageElement: (src, pos) =>
     set((state) => {
+      const scene = state.activeScene();
+      // Auto-number: count existing image elements
+      const count = scene.elements.filter(e => e.type === "image").length;
       const el = createElement("image", {
+        name: `image${count + 1}`,
         props: { src, fit: "cover", alt: "" },
-        zIndex: state.activeScene().elements.length + 1,
+        zIndex: scene.elements.length + 1,
         ...(pos ? { x: pos.x, y: pos.y } : {}),
       });
       return {
@@ -365,18 +431,47 @@ export const useEditor = create<EditorState>((set, get) => ({
   removeScene: (id) =>
     set((state) => {
       if (state.project.scenes.length <= 1) return state; // keep at least one
+
       const scenes = state.project.scenes.filter((s) => s.id !== id);
-      const activeSceneId =
-        state.activeSceneId === id ? scenes[0].id : state.activeSceneId;
+
+      // Break goToScene actions pointing to deleted scene
+      const cleanedScenes = scenes.map((scene) => ({
+        ...scene,
+        elements: scene.elements.map((el) => ({
+          ...el,
+          interactions: el.interactions.map((int) => ({
+            ...int,
+            actions: int.actions.filter(
+              (act) => !(act.type === "goToScene" && act.params.sceneId === id)
+            ),
+          })),
+        })),
+      }));
+
+      // Clean up visual parent relationships
+      const visualParents = new Map(state.visualParents);
+      visualParents.delete(id); // Remove deleted scene's visual parent entry
+      // Orphan children: remove entries where this scene was the parent
+      for (const [childId, parentId] of visualParents.entries()) {
+        if (parentId === id) {
+          visualParents.delete(childId);
+        }
+      }
+
+      const newHomeId =
+        state.project.startSceneId === id ? cleanedScenes[0].id : state.project.startSceneId;
+
+      const newActiveId = state.activeSceneId === id ? cleanedScenes[0].id : state.activeSceneId;
+
       return {
         project: {
           ...state.project,
-          scenes,
-          startSceneId:
-            state.project.startSceneId === id ? scenes[0].id : state.project.startSceneId,
+          scenes: cleanedScenes,
+          startSceneId: newHomeId,
         },
-        activeSceneId,
+        activeSceneId: newActiveId,
         selectedId: null,
+        visualParents,
         dirty: true,
       };
     }),
@@ -396,6 +491,18 @@ export const useEditor = create<EditorState>((set, get) => ({
         ...(width !== undefined ? { width } : {}),
         ...(height !== undefined ? { height } : {}),
       },
+      dirty: true,
+    })),
+
+  setEnableBackButton: (enabled) =>
+    set((state) => ({
+      project: { ...state.project, enableBackButton: enabled },
+      dirty: true,
+    })),
+
+  setEnableHomeButton: (enabled) =>
+    set((state) => ({
+      project: { ...state.project, enableHomeButton: enabled },
       dirty: true,
     })),
 

@@ -239,10 +239,11 @@ export function SceneStructure() {
 }
 
 const panel: CSSProperties = {
-  borderTop: "4px solid #0b1016",
+  borderTop: "4px solid #0a0e13",
   padding: "14px 12px",
-  maxHeight: "38%",
+  maxHeight: "230px",
   overflowY: "auto",
+  background: "#13171d",
 };
 const heading: CSSProperties = {
   color: "#7c8aa0",
@@ -256,10 +257,11 @@ const row: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  padding: "6px 6px",
-  marginBottom: 2,
+  padding: "5px 5px",
+  marginBottom: 1,
   borderRadius: 6,
-  background: "#11161f",
+  border: "1px solid #4e546694",
+  background: "#0f131b",
   color: "#cbd5e1",
   fontSize: 13,
   cursor: "pointer",

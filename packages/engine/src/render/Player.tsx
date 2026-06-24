@@ -2,11 +2,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import type { Element, Project, Scene } from "../model/types.js";
 import { ElementRenderer, resolveSrc } from "./ElementRenderer.js";
 import { runInteraction, type PlayerContext } from "../runtime/interactions.js";
-import { bindingContext, bindingHost } from "../data/BindingContext.js";
-import { overrideStore } from "../runtime/overrideStore.js";
-import { applyOverrides } from "../runtime/applyOverrides.js";
-import { useOverrides } from "../runtime/useOverrides.js";
+import { elementResolver, bindingHost, overrideHost } from "../data/ElementResolver.js";
 import { createTransitionController } from "../runtime/TransitionController.js";
+import { NavigationOverlay } from "./NavigationOverlay.js";
 
 export interface PlayerProps {
   project: Project;
@@ -41,6 +39,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     { scene: firstScene!, key: `${firstScene!.id}-0` }
   ]);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
 
   const keyCounterRef = useRef(0);
 
@@ -80,7 +79,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const transitionControllerRef = useRef(createTransitionController());
   const stageRef = useRef<HTMLDivElement>(null);
-  const isFirstSceneRef = useRef(true);
+  const hasLoadedHomeSceneRef = useRef(false);
 
   // Issue 6 fix: Extract transition execution to useCallback
   const executeTransition = useCallback(async (targetScene: Scene, newKey: string) => {
@@ -98,47 +97,82 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     const outgoingEl = containers[containers.length - 2];
     const incomingEl = containers[containers.length - 1];
 
-    await transitionControllerRef.current.transitionTo(targetScene, stageEl, outgoingEl, incomingEl);
+    await transitionControllerRef.current.transitionTo(
+      targetScene,
+      stageEl,
+      outgoingEl,
+      incomingEl,
+      project.width,
+      project.height
+    );
 
     // Remove outgoing scene
     setSceneLayers([{ scene: targetScene, key: newKey }]);
     setIsTransitioning(false);
   }, []);
 
+  // Internal navigation with history control
+  const goToSceneInternal = useCallback(async (sceneId: string, pushToHistory: boolean) => {
+    if (isTransitioning || transitionControllerRef.current.state === "transitioning") {
+      console.warn("[Player] goToScene ignored: transition in progress");
+      return;
+    }
+
+    const targetScene = project.scenes.find((s) => s.id === sceneId);
+    if (!targetScene) {
+      console.warn(`[Player] goToScene: scene ${sceneId} not found`);
+      return;
+    }
+
+    const homeSceneId = project.startSceneId ?? project.scenes[0]?.id;
+    const currentSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
+
+    // Push current scene to history if requested and not navigating to home
+    if (pushToHistory && currentSceneId && sceneId !== homeSceneId) {
+      setNavigationHistory((h) => [...h, currentSceneId]);
+    }
+
+    // Clear history when arriving at home scene
+    if (sceneId === homeSceneId) {
+      setNavigationHistory([]);
+    }
+
+    // Skip transition for first home scene load or if no transition defined
+    const isFirstHomeSceneLoad = targetScene.id === homeSceneId && !hasLoadedHomeSceneRef.current;
+
+    if (isFirstHomeSceneLoad || !targetScene.transition || targetScene.transition.type === "none") {
+      if (isFirstHomeSceneLoad) {
+        hasLoadedHomeSceneRef.current = true;
+      }
+      setSceneLayers([{ scene: targetScene, key: `${targetScene.id}-${++keyCounterRef.current}` }]);
+      return;
+    }
+
+    // Run transition
+    setIsTransitioning(true);
+    const newKey = `${targetScene.id}-${++keyCounterRef.current}`;
+    setSceneLayers((prev) => [...prev, { scene: targetScene, key: newKey }]);
+
+    // Wait for render, then run transition
+    requestAnimationFrame(() => {
+      executeTransition(targetScene, newKey);
+    });
+  }, [isTransitioning, project, sceneLayers, executeTransition]);
+
   // Issue 2 fix: Remove useMemo to prevent stale closures
   // ctx object is cheap to create, no need for memoization
   const ctx: PlayerContext = {
     goToScene: async (sceneId) => {
-        if (isTransitioning || transitionControllerRef.current.state === "transitioning") {
-          console.warn("[Player] goToScene ignored: transition in progress");
-          return;
-        }
-
-        const targetScene = project.scenes.find((s) => s.id === sceneId);
-        if (!targetScene) {
-          console.warn(`[Player] goToScene: scene ${sceneId} not found`);
-          return;
-        }
-
-        // Skip transition for first scene or if no transition defined
-        if (isFirstSceneRef.current || !targetScene.transition || targetScene.transition.type === "none") {
-          isFirstSceneRef.current = false;
-          setSceneLayers([{ scene: targetScene, key: `${targetScene.id}-${++keyCounterRef.current}` }]);
-          return;
-        }
-
-        // Run transition
-        setIsTransitioning(true);
-        const newKey = `${targetScene.id}-${++keyCounterRef.current}`;
-        setSceneLayers((prev) => [...prev, { scene: targetScene, key: newKey }]);
-
-        // Wait for render, then run transition
-        requestAnimationFrame(() => {
-          executeTransition(targetScene, newKey);
-        });
-      },
-      setProp: (elementId, key, value) => overrideStore.setOverride(elementId, key, value),
-      toggleVisibility: (elementId) => overrideStore.toggle(elementId, "__hidden"),
+      goToSceneInternal(sceneId, true);
+    },
+    goBack: () => {
+      if (navigationHistory.length === 0) return;
+      const previousSceneId = navigationHistory[navigationHistory.length - 1];
+      setNavigationHistory((h) => h.slice(0, -1));
+      goToSceneInternal(previousSceneId, false);
+    },
+      setProp: (elementId, key, value) => overrideHost.setOverride(elementId, key, value),
+      toggleVisibility: (elementId) => overrideHost.toggleOverride(elementId, "__hidden"),
       playAudio: (elementId) => {
         const audio = audioElementsRef.current.get(elementId);
         if (audio) {
@@ -200,8 +234,55 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   // scene starts clean). The idle attract-reset remounts the Player, which also
   // resets via this effect's initial run.
   useEffect(() => {
-    overrideStore.reset();
+    overrideHost.resetOverrides();
   }, [activeSceneId]);
+
+  // Track which scene entries have already fired enterScene interactions.
+  // Keys are scene layer keys (e.g., "scene2-5"), which are unique per entry
+  // even if the same scene is visited multiple times.
+  const firedEnterSceneRef = useRef<Set<string>>(new Set());
+
+  // Fire enterScene interactions when a scene becomes active.
+  // Per ADR 0001, these fire after transitions complete, not during.
+  useEffect(() => {
+    const activeLayer = sceneLayers[sceneLayers.length - 1];
+    if (!activeLayer) return;
+
+    const layerKey = activeLayer.key;
+
+    // Don't fire during transitions (wait for completion)
+    if (isTransitioning) return;
+
+    // Don't fire if already fired for this scene entry
+    if (firedEnterSceneRef.current.has(layerKey)) return;
+
+    const scene = activeLayer.scene;
+
+    // Recursively collect all elements (including children in groups/collections)
+    const collectAllElements = (elements: Element[]): Element[] => {
+      const result: Element[] = [];
+      for (const el of elements) {
+        result.push(el);
+        if (el.children && el.children.length > 0) {
+          result.push(...collectAllElements(el.children));
+        }
+      }
+      return result;
+    };
+
+    const allElements = collectAllElements(scene.elements);
+
+    // Run enterScene interactions on all elements in the scene
+    for (const element of allElements) {
+      for (const interaction of element.interactions) {
+        if (interaction.trigger === "enterScene") {
+          runInteraction(interaction, ctx);
+        }
+      }
+    }
+
+    firedEnterSceneRef.current.add(layerKey);
+  }, [sceneLayers, isTransitioning, ctx]);
 
   const handleTap = useCallback(
     (element: Element) => {
@@ -241,10 +322,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     bindingHost.clearCache();
   }, [project]);
 
-  // Subscribe to bindings and interaction overrides; re-render when they change.
+  // Subscribe to element resolution (bindings + overrides); re-render when they change.
   // Hook must be called unconditionally (Rules of Hooks), even if live=false.
-  const resolveBindings = bindingContext.useBindings();
-  const getOverrides = useOverrides();
+  const resolveElement = elementResolver.useResolveElement();
 
   if (sceneLayers.length === 0) return <FatalMessage text="Project has no scenes." />;
 
@@ -270,6 +350,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       console.log(`[Player] Video element ${elementId} unregistered`);
     }
   }, []);
+
+  const currentSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id ?? "";
+  const homeSceneId = project.startSceneId ?? project.scenes[0]?.id;
 
   return (
     <ScaledStage width={project.width} height={project.height} stageRef={stageRef}>
@@ -303,10 +386,8 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           >
             <div className="scene-elements" style={{ position: "absolute", inset: 0 }}>
               {scene.elements.map((el) => {
-                // Bindings first (live data), then interaction overrides on top.
-                const resolved = live
-                  ? applyOverrides(resolveBindings(el), getOverrides(el.id))
-                  : el;
+                // Unified resolution: bindings + overrides in one call.
+                const resolved = live ? resolveElement(el) : el;
 
                 // Force audio elements to opacity: 0 in play/kiosk mode
                 const finalElement = resolved.type === "audio"
@@ -335,6 +416,17 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           </div>
         );
       })}
+
+      {/* Navigation overlay (only in Play/Kiosk mode) */}
+      {hideAudioIcons && (
+        <NavigationOverlay
+          project={project}
+          currentSceneId={currentSceneId}
+          navigationHistory={navigationHistory}
+          onBack={ctx.goBack}
+          onHome={() => homeSceneId && ctx.goToScene(homeSceneId)}
+        />
+      )}
     </ScaledStage>
   );
 }

@@ -35,7 +35,7 @@ export function Palette() {
 
 const panel: React.CSSProperties = {
   flexShrink: 0,
-  background: "#12161d",
+  background: "#0e1218",
   padding: "14px 12px",
 };
 const heading: React.CSSProperties = {
@@ -56,7 +56,7 @@ const item: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   padding: "14px 10px",
-  background: "#0e1218",
+  background: "#11161f",
   border: "1px solid #34393f",
   borderRadius: 8,
   color: "#e2e8f0",

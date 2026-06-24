@@ -83,7 +83,7 @@ export function DataSourcesPanel() {
 }
 
 const panel: CSSProperties = {
-  borderTop: "4px solid #0b1016",
+  borderTop: "4px solid #0a0e13",
   padding: "14px 12px",
   overflowY: "auto",
 };

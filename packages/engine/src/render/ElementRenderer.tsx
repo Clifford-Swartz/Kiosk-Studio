@@ -201,26 +201,46 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
 
     case "button":
       return (
-        <div
-          role="button"
-          style={{
-            ...baseStyle,
-            backgroundColor: str(props.fill, "#2563eb"),
-            color: str(props.color, "#ffffff"),
-            borderRadius: num(props.radius, 12),
-            fontSize: num(props.fontSize, 28),
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-          }}
-          onClick={() => onTap?.(element)}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {str(props.label, "Button")}
-          {children}
-        </div>
+        <>
+          {/* Visual button element at its normal z-index */}
+          <div
+            role="button"
+            style={{
+              ...baseStyle,
+              backgroundColor: str(props.fill, "#2563eb"),
+              color: str(props.color, "#ffffff"),
+              borderRadius: num(props.radius, 12),
+              fontSize: num(props.fontSize, 28),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              pointerEvents: "none", // Disable events on visual element
+            }}
+          >
+            {str(props.label, "Button")}
+            {children}
+          </div>
+          {/* Invisible interaction overlay at high z-index */}
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width,
+              height,
+              transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
+              transformOrigin: "top left",
+              zIndex: 999999, // Very high z-index to capture events above everything
+              borderRadius: num(props.radius, 12), // Match visual button's shape
+              cursor: "pointer",
+              pointerEvents: "auto",
+            }}
+            onClick={() => onTap?.(element)}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          />
+        </>
       );
 
     case "group":

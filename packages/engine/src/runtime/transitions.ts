@@ -6,6 +6,8 @@ export type TransitionFn = (
     direction?: "up" | "down" | "left" | "right";
     duration: number;
     elementsOnly: boolean;
+    width: number;
+    height: number;
   }
 ) => Promise<void>;
 
@@ -64,8 +66,9 @@ registerTransition("fade", async ({ outgoingEl, incomingEl, duration, elementsOn
       await sleep(duration);
 
       // ===== CLEANUP =====
-      // Reset styles on both wrappers and containers (after Phase 2 completes)
-      outgoingEl.style.display = "";
+      // Reset styles on wrappers only. Leave outgoingEl.display="none" to prevent
+      // flicker between cleanup and React unmount (the Player removes the outgoing
+      // scene after transition completes).
       incomingEl.style.transition = "";
       incomingEl.style.opacity = "";
       outgoingElements.style.transition = "";
@@ -102,23 +105,24 @@ registerTransition("fade", async ({ outgoingEl, incomingEl, duration, elementsOn
   await sleep(duration);
 
   // Cleanup (preserve background styles)
+  // Leave outgoingEl.display="none" to prevent flicker between cleanup and React
+  // unmount (the Player removes the outgoing scene after transition completes).
   outgoingEl.style.transition = "";
   outgoingEl.style.transform = "";
   outgoingEl.style.opacity = "";
-  outgoingEl.style.display = "";
   incomingEl.style.transition = "";
   incomingEl.style.transform = "";
   incomingEl.style.opacity = "";
 });
 
-registerTransition("slide", async ({ containerEl, outgoingEl, incomingEl, direction = "left", duration }) => {
-  const { width, height } = containerEl.getBoundingClientRect();
+registerTransition("slide", async ({ outgoingEl, incomingEl, direction = "left", duration, width, height }) => {
+  // Use intrinsic project dimensions (not scaled getBoundingClientRect)
   const axis = direction === "up" || direction === "down" ? "Y" : "X";
-  const sign = direction === "down" || direction === "right" ? 1 : -1;
+  const sign = direction === "left" || direction === "up" ? 1 : -1;
   const distance = axis === "X" ? width : height;
 
   // Position incoming offscreen
-  incomingEl.style.transform = `translate${axis}(${sign * distance }px)`;
+  incomingEl.style.transform = `translate${axis}(${sign * distance}px)`;
   incomingEl.style.transition = "none";
   incomingEl.style.display = "block";
 
@@ -140,16 +144,13 @@ registerTransition("slide", async ({ containerEl, outgoingEl, incomingEl, direct
   incomingEl.style.transform = "";
 });
 
-registerTransition("push", async ({ containerEl, outgoingEl, incomingEl, direction = "left", duration }) => {
-  const { width, height } = containerEl.getBoundingClientRect();
+registerTransition("push", async ({ outgoingEl, incomingEl, direction = "left", duration, width, height }) => {
+  // Use intrinsic project dimensions (not scaled getBoundingClientRect)
   const axis = direction === "up" || direction === "down" ? "Y" : "X";
-  const sign = direction === "down" || direction === "right" ? 1 : -1;
+  const sign = direction === "left" || direction === "up" ? 1 : -1;
   const distance = axis === "X" ? width : height;
 
-  // Position incoming offscreen in push direction
-  incomingEl.style.position = "absolute";
-  incomingEl.style.top = "0";
-  incomingEl.style.left = "0";
+  // Position incoming offscreen (use transform only, don't touch position/size)
   incomingEl.style.transform = `translate${axis}(${sign * distance}px)`;
   incomingEl.style.transition = "none";
   incomingEl.style.display = "block";
@@ -168,14 +169,8 @@ registerTransition("push", async ({ containerEl, outgoingEl, incomingEl, directi
   outgoingEl.style.display = "none";
   outgoingEl.style.transition = "";
   outgoingEl.style.transform = "";
-  outgoingEl.style.position = "";
-  outgoingEl.style.top = "";
-  outgoingEl.style.left = "";
   incomingEl.style.transition = "";
   incomingEl.style.transform = "";
-  incomingEl.style.position = "";
-  incomingEl.style.top = "";
-  incomingEl.style.left = "";
 });
 
 registerTransition("zoom", async ({ outgoingEl, incomingEl, duration, elementsOnly }) => {
@@ -219,8 +214,9 @@ registerTransition("zoom", async ({ outgoingEl, incomingEl, duration, elementsOn
       await sleep(duration);
 
       // ===== CLEANUP =====
-      // Reset styles on both wrappers and containers (after Phase 2 completes)
-      outgoingEl.style.display = "";
+      // Reset styles on wrappers only. Leave outgoingEl.display="none" to prevent
+      // flicker between cleanup and React unmount (the Player removes the outgoing
+      // scene after transition completes).
       incomingEl.style.transition = "";
       incomingEl.style.opacity = "";
       outgoingElements.style.transition = "";
@@ -263,7 +259,6 @@ registerTransition("zoom", async ({ outgoingEl, incomingEl, duration, elementsOn
   outgoingEl.style.transition = "";
   outgoingEl.style.transform = "";
   outgoingEl.style.opacity = "";
-  outgoingEl.style.display = "";
   incomingEl.style.transition = "";
   incomingEl.style.transform = "";
   incomingEl.style.opacity = "";

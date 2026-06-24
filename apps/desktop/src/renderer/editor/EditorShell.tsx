@@ -1,8 +1,6 @@
 import { Canvas } from "./Canvas.js";
-import { DataSourcesPanel } from "./DataSourcesPanel.js";
-import { Palette } from "./Palette.js";
 import { PropertiesPanel } from "./PropertiesPanel.js";
-import { SceneStructure } from "./SceneStructure.js";
+import { SidebarTabs } from "./SidebarTabs.js";
 import { TopBar } from "./TopBar.js";
 import { useUndoRedo } from "./useUndoRedo.js";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.js";
@@ -17,10 +15,11 @@ import { useEditor } from "./store.js";
  *   │ Struct. │                                 │              │
  *   └─────────┴─────────────────────────────────┴──────────────┘
  */
-export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
+export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
+  onSaveAs: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
 }) {
@@ -76,6 +75,12 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
       preventDefault: true,
       log: true,
     },
+    "Mod+Shift+S": {
+      action: () => onSaveAs(),
+      description: "Save project as",
+      preventDefault: true,
+      log: true,
+    },
     "Mod+C": {
       action: () => copyElement(),
       enabled: () => !!selectedId,
@@ -124,13 +129,9 @@ export function EditorShell({ onPlay, onKiosk, onSave, onOpen, onImportPptx }: {
 
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#0b1016" }}>
-      <TopBar onPlay={onPlay} onKiosk={onKiosk} onSave={onSave} onOpen={onOpen} onImportPptx={onImportPptx} onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
+      <TopBar onPlay={onPlay} onKiosk={onKiosk} onSave={onSave} onSaveAs={onSaveAs} onOpen={onOpen} onImportPptx={onImportPptx} onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto", background: "#0e1218", borderRight: "1px solid #1f2733" }}>
-          <Palette />
-          <SceneStructure />
-          <DataSourcesPanel />
-        </div>
+        <SidebarTabs />
         <Canvas pauseCapture={pauseCapture} resumeCapture={resumeCapture} />
         <PropertiesPanel />
       </div>
