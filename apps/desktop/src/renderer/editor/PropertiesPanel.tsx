@@ -1,8 +1,10 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Element } from "@kiosk/engine";
+import { isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importPickedImage, importContentFile, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
+import { MaskEditorModal } from "./MaskEditorModal.js";
 
 /**
  * Debounce a value to reduce rapid history entries. The value updates
@@ -62,11 +64,15 @@ export function PropertiesPanel() {
     <div style={panel}>
       <div style={heading}>Properties · {el.type}</div>
 
-      <Row label="X"><Num value={el.x} onChange={debouncedNumCb("x")} /></Row>
-      <Row label="Y"><Num value={el.y} onChange={debouncedNumCb("y")} /></Row>
-      <Row label="W"><Num value={el.width} onChange={debouncedNumCb("width")} /></Row>
-      <Row label="H"><Num value={el.height} onChange={debouncedNumCb("height")} /></Row>
-      <Row label="Rotation"><Num value={el.rotation} onChange={debouncedNumCb("rotation")} /></Row>
+      {el.type !== "layer" && (
+        <>
+          <Row label="X"><Num value={el.x} onChange={debouncedNumCb("x")} /></Row>
+          <Row label="Y"><Num value={el.y} onChange={debouncedNumCb("y")} /></Row>
+          <Row label="W"><Num value={el.width} onChange={debouncedNumCb("width")} /></Row>
+          <Row label="H"><Num value={el.height} onChange={debouncedNumCb("height")} /></Row>
+          <Row label="Rotation"><Num value={el.rotation} onChange={debouncedNumCb("rotation")} /></Row>
+        </>
+      )}
       <Row label="Opacity">
         <input
           type="range"
@@ -198,6 +204,18 @@ function TypeFields({
               Reset to placeholder
             </button>
           )}
+
+          <Row label="Fit">
+            <select
+              value={str(p.fit, "cover")}
+              onChange={(e) => set("fit", e.target.value)}
+              style={input}
+            >
+              <option value="cover">Cover</option>
+              <option value="contain">Contain</option>
+              <option value="fill">Fill</option>
+            </select>
+          </Row>
         </>
       );
 
@@ -369,6 +387,8 @@ function TypeFields({
       );
     case "collection":
       return <CollectionFields el={el} set={set} />;
+    case "layer":
+      return <LayerFields el={el} />;
     default:
       return null;
   }
@@ -412,9 +432,7 @@ function SceneSettings() {
           }}
           style={input}
         >
-          <option value="custom" disabled>
-            — choose —
-          </option>
+          <option value="custom">Custom</option>
           {SIZE_PRESETS.map((p) => (
             <option key={p.label} value={p.label}>{p.label}</option>
           ))}
@@ -586,6 +604,91 @@ function SceneSettings() {
   );
 }
 
+/** Properties for a layer: tint overlay, mask editor, lock control. */
+function LayerFields({ el }: { el: Element }) {
+  const updateElement = useEditor((s) => s.updateElement);
+  const [showMaskEditor, setShowMaskEditor] = useState(false);
+  const tint = el.tint ?? { color: "#000000", opacity: 0 };
+  const hasMask = !!el.mask;
+
+  const setTint = (patch: Partial<typeof tint>) =>
+    updateElement(el.id, { tint: { ...tint, ...patch } });
+
+  return (
+    <>
+      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+        Tint Overlay
+      </div>
+      <Row label="Color">
+        <Color value={tint.color} onChange={(v) => setTint({ color: v })} />
+      </Row>
+      <Row label="Strength">
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={tint.opacity}
+          onChange={(e) => setTint({ opacity: Number(e.target.value) })}
+          style={{ width: "100%" }}
+        />
+        <span style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}>
+          {Math.round(tint.opacity * 100)}%
+        </span>
+      </Row>
+
+      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+        Mask
+      </div>
+      {hasMask && (
+        <div style={{ background: "#0e1218", border: "1px solid #1f2733", borderRadius: 6, padding: 8, marginBottom: 6 }}>
+          <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 4 }}>
+            {el.mask!.type === "rect" ? "Rectangle mask" : "Polygon mask"} ({el.mask!.points.length} points)
+          </div>
+          <button
+            style={{ ...chooseBtn, padding: "4px 8px", fontSize: 11 }}
+            onClick={() => setShowMaskEditor(true)}
+          >
+            Edit Mask
+          </button>
+          <button
+            style={{ ...miniBtn, width: "100%", marginTop: 4, color: "#fca5a5" }}
+            onClick={() => updateElement(el.id, { mask: undefined })}
+          >
+            ✕ Delete Mask
+          </button>
+        </div>
+      )}
+      {!hasMask && (
+        <button
+          style={chooseBtn}
+          onClick={() => setShowMaskEditor(true)}
+        >
+          Create Mask
+        </button>
+      )}
+
+      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+        Layer Lock
+      </div>
+      <Row label="Locked">
+        <input
+          type="checkbox"
+          checked={el.locked ?? false}
+          onChange={(e) => updateElement(el.id, { locked: e.target.checked })}
+        />
+      </Row>
+      <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
+        When locked, layer and children cannot be selected or edited on canvas.
+      </div>
+
+      {showMaskEditor && (
+        <MaskEditorModal layerId={el.id} onClose={() => setShowMaskEditor(false)} />
+      )}
+    </>
+  );
+}
+
 type CollItem = { id: string; title?: string; subtitle?: string; image?: string; thumbnail?: string };
 
 /** Properties for a collection: layout + knobs + the static items editor. */
@@ -729,7 +832,8 @@ function CollectionFields({
  */
 function BindControl({ elementId, targetProp }: { elementId: string; targetProp: string }) {
   const scene = useEditor((s) => s.activeScene());
-  const sources = useEditor((s) => s.project.dataSources);
+  const connectors = useEditor((s) => s.project.dataConnectors || []);
+  const sources = connectors.filter(isRestConnector).filter((c) => c.input?.enabled); // Only input-enabled connectors can be bound
   const setBinding = useEditor((s) => s.setBinding);
   const clearBinding = useEditor((s) => s.clearBinding);
   const el = scene.elements.find((e) => e.id === elementId);
