@@ -25,6 +25,12 @@ const api = {
   ensureWorkspace: (text: string, projectName: string): Promise<string> =>
     ipcRenderer.invoke("project:ensureWorkspace", text, projectName),
   /**
+   * Export the current project as a bundled .kproj folder with all assets.
+   * Returns the exported project path, or null if canceled.
+   */
+  exportProject: (projectPath: string, text: string): Promise<string | null> =>
+    ipcRenderer.invoke("project:export", projectPath, text),
+  /**
    * Copy image bytes (base64) into the project's assets/ folder; resolves to
    * the relative path ("assets/<name>") to store in the element's src.
    */
@@ -68,15 +74,18 @@ const api = {
   exitKiosk: (): Promise<void> => ipcRenderer.invoke("kiosk:exit"),
   /** Toggle the OS window fullscreen (used by the in-app ▶ Play). */
   setFullscreen: (on: boolean): Promise<void> => ipcRenderer.invoke("window:fullscreen", on),
-  /** Subscribe to pushed connector values; returns an unsubscribe. */
-  onDataValue: (
-    cb: (value: { sourceId: string; value: unknown; at: number }) => void
+  /** Subscribe to EventBus-compatible events from main process; returns an unsubscribe. */
+  onEvent: (
+    cb: (event: { kind: string; payload: Record<string, unknown>; timestamp?: number; sessionId?: string; sceneId?: string }) => void
   ): (() => void) => {
-    const handler = (_e: unknown, value: { sourceId: string; value: unknown; at: number }) =>
-      cb(value);
-    ipcRenderer.on("data:value", handler);
-    return () => ipcRenderer.removeListener("data:value", handler);
+    const handler = (_e: unknown, event: { kind: string; payload: Record<string, unknown>; timestamp?: number; sessionId?: string; sceneId?: string }) =>
+      cb(event);
+    ipcRenderer.on("event:emit", handler);
+    return () => ipcRenderer.removeListener("event:emit", handler);
   },
+  /** Write analytics data to file (CSV/JSON/JSONL). */
+  writeAnalytics: (path: string, data: string, append: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("analytics:write", path, data, append),
 };
 
 export type KioskApi = typeof api;

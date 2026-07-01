@@ -123,6 +123,34 @@ export function App() {
     }
   }
 
+  async function handleExport() {
+    try {
+      if (!filePath) {
+        window.alert("Please save the project before exporting.");
+        return;
+      }
+
+      // Strip sentinel values before exporting
+      const normalized = JSON.parse(JSON.stringify(project));
+      for (const scene of normalized.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && element.props.src === "__placeholder__") {
+            element.props.src = "";
+          }
+        }
+      }
+
+      const text = JSON.stringify(normalized, null, 2);
+      const exportedPath = await window.kiosk.exportProject(filePath, text);
+
+      if (exportedPath) {
+        console.log(`Exported to: ${exportedPath}`);
+      }
+    } catch (err) {
+      window.alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function handleOpen() {
     try {
       const path = await window.kiosk.pickProject();
@@ -229,6 +257,7 @@ export function App() {
       onSaveAs={handleSaveAs}
       onOpen={handleOpen}
       onImportPptx={handleImportPptx}
+      onExport={handleExport}
     />
   );
 }

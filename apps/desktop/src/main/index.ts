@@ -3,8 +3,8 @@ import { getConnectorFactory, type Connector, type ConnectorValue, type SourceSp
 import { parsePptx } from "@kiosk/pptx";
 import { appendFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { readFile, writeFile, mkdir, appendFile, readdir } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -50,6 +50,122 @@ function defaultProjectPath(): string {
   // Dev: out/main/index.js -> repo root is four levels up.
   const repoRoot = resolve(__dirname, "..", "..", "..", "..");
   return join(repoRoot, "examples", "hello.kproj", "project.json");
+}
+
+/**
+ * Get app root directory. Packaged: dirname(process.execPath). Dev: repo root.
+ */
+function getAppRoot(): string {
+  return app.isPackaged
+    ? dirname(process.execPath)
+    : resolve(__dirname, "..", "..", "..", "..");
+}
+
+/**
+ * Get shared user-content folder path at app root.
+ */
+function getSharedUserContentPath(): string {
+  return join(getAppRoot(), "user-content");
+}
+
+/**
+ * Get Exports folder where projects are stored.
+ */
+function getExportsPath(): string {
+  return join(getAppRoot(), "Exports");
+}
+
+/**
+ * Read project.json and extract exported flag.
+ * Returns false if file not found or parsing fails.
+ */
+async function isProjectExported(projectDir: string): Promise<boolean> {
+  try {
+    const projectJsonPath = join(projectDir, "project.json");
+    const text = await readFile(projectJsonPath, "utf8");
+    const parsed = JSON.parse(text);
+    return parsed.exported === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rewrite asset paths for export: "user-content/file" → "assets/file"
+ */
+function rewritePathsForExport(projectObj: Record<string, unknown>): void {
+  const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }> | undefined;
+  if (!scenes) return;
+
+  const rewritePath = (path: unknown): unknown => {
+    if (typeof path !== "string") return path;
+    if (path.startsWith("user-content/")) {
+      return path.replace(/^user-content\//, "assets/");
+    }
+    return path;
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      const props = el.props as Record<string, unknown>;
+      if (props.src) props.src = rewritePath(props.src);
+      if (props.background) props.background = rewritePath(props.background);
+    }
+    if (el.children && Array.isArray(el.children)) {
+      el.children.forEach(processElement);
+    }
+  };
+
+  for (const scene of scenes) {
+    // Rewrite scene background
+    if (scene.background) {
+      scene.background = rewritePath(scene.background);
+    }
+    // Rewrite element paths
+    if (scene.elements) {
+      scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
+    }
+  }
+}
+
+/**
+ * Collect all user-content file references from project.
+ * Returns array of filenames (not full paths).
+ */
+function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
+  const refs = new Set<string>();
+  const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }> | undefined;
+  if (!scenes) return [];
+
+  const extractPath = (path: unknown): void => {
+    if (typeof path === "string" && path.startsWith("user-content/")) {
+      refs.add(basename(path));
+    }
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      const props = el.props as Record<string, unknown>;
+      if (props.src) extractPath(props.src);
+      if (props.background) extractPath(props.background);
+    }
+    if (el.children && Array.isArray(el.children)) {
+      el.children.forEach(processElement);
+    }
+  };
+
+  for (const scene of scenes) {
+    // Extract scene background
+    if (scene.background) {
+      extractPath(scene.background);
+    }
+    // Extract element paths
+    if (scene.elements) {
+      scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
+    }
+  }
+
+  return Array.from(refs);
 }
 
 /**
@@ -144,7 +260,7 @@ function safeFolderName(name: string): string {
 
 /**
  * Silently establish a workspace folder for a not-yet-saved project so assets
- * have a home — no dialog. Creates Documents/KioskStudio/<name>-<rand>/ with the
+ * have a home — no dialog. Creates Exports/<name>-<rand>.kproj/ with the
  * project.json inside, and returns that path. Used the first time an asset is
  * added; the user can later Save As to relocate.
  */
@@ -153,8 +269,8 @@ async function ensureWorkspace(
   text: string,
   projectName: string
 ): Promise<string> {
-  const base = join(app.getPath("documents"), "KioskStudio");
-  const folder = `${safeFolderName(projectName)}-${randomBytes(3).toString("hex")}`;
+  const base = getExportsPath();
+  const folder = `${safeFolderName(projectName)}-${randomBytes(3).toString("hex")}.kproj`;
   const dir = join(base, folder);
   await mkdir(dir, { recursive: true });
   const path = join(dir, "project.json");
@@ -174,9 +290,12 @@ async function saveProject(
 ): Promise<string | null> {
   let path = projectPath;
   if (!path) {
+    const exportsDir = getExportsPath();
+    await mkdir(exportsDir, { recursive: true });
+
     const result = await dialog.showSaveDialog({
       title: "Save Kiosk project",
-      defaultPath: "project.json",
+      defaultPath: join(exportsDir, "project.json"),
       filters: [{ name: "Kiosk project", extensions: ["json"] }],
     });
     if (result.canceled || !result.filePath) return null;
@@ -186,41 +305,40 @@ async function saveProject(
   return path;
 }
 
-/** Get the absolute path to the user-content folder for a project. */
+/** Get user-content folder path. For imports, always return shared app-root user-content/. */
 function getUserContentFolderPath(projectPath: string): string {
-  return join(dirname(projectPath), "user-content");
+  return getSharedUserContentPath();
 }
 
-/** Ensure the user-content folder exists. */
+/** Ensure shared user-content folder exists. */
 async function ensureUserContentFolder(projectPath: string): Promise<string> {
-  const dir = getUserContentFolderPath(projectPath);
+  const dir = getSharedUserContentPath();
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
-/** Check if a file path is inside the user-content folder. */
+/** Check if file is inside shared user-content folder. */
 function isFileInUserContentFolder(filePath: string, projectPath: string): boolean {
   const resolved = resolve(filePath);
-  const contentDir = resolve(getUserContentFolderPath(projectPath));
+  const contentDir = resolve(getSharedUserContentPath());
   return resolved.startsWith(contentDir + sep);
 }
 
 /**
- * Copy a file to the user-content folder, preserving the original filename.
- * If a file with that name already exists, appends _1, _2, etc. to the filename.
- * Returns the relative path (e.g., "user-content/image.jpg").
+ * Copy file to shared user-content folder with deduplication (append _1, _2, etc.).
+ * Returns relative path: "user-content/filename.ext"
  */
 async function copyToUserContent(
   projectPath: string,
   sourcePath: string
 ): Promise<string> {
-  const contentDir = await ensureUserContentFolder(projectPath);
-  const fileName = basename(sourcePath);
+  const contentDir = getSharedUserContentPath();
+  await mkdir(contentDir, { recursive: true });
 
+  const fileName = basename(sourcePath);
   let targetPath = join(contentDir, fileName);
   let finalName = fileName;
 
-  // Deduplicate: if file exists, append _1, _2, etc.
   if (await fileExists(targetPath)) {
     const ext = extname(fileName);
     const base = fileName.slice(0, -ext.length);
@@ -234,7 +352,6 @@ async function copyToUserContent(
 
   const buf = await readFile(sourcePath);
   await writeFile(targetPath, buf);
-
   return `user-content/${finalName}`;
 }
 
@@ -275,9 +392,9 @@ async function saveAsset(
 }
 
 /**
- * Show a content picker dialog (image, video, or audio) defaulting to the
- * project's user-content folder. Returns the chosen file's name and relative path,
- * or null if canceled. If the file is outside the user-content folder, copies it in first.
+ * Show content picker dialog defaulting to shared user-content/.
+ * Returns chosen file's name and relative path, or null if canceled.
+ * Copies external files into shared user-content/ first.
  */
 async function pickContent(
   _e: unknown,
@@ -290,7 +407,7 @@ async function pickContent(
     audio: ["mp3", "wav", "ogg"],
   };
 
-  const contentDir = getUserContentFolderPath(projectPath);
+  const contentDir = getSharedUserContentPath();
   const result = await dialog.showOpenDialog({
     title: `Choose ${type}`,
     defaultPath: contentDir,
@@ -303,12 +420,10 @@ async function pickContent(
   const filePath = result.filePaths[0]!;
   const fileName = basename(filePath);
 
-  // If file is already in the user-content folder, use it directly.
   if (isFileInUserContentFolder(filePath, projectPath)) {
     return { name: fileName, path: `user-content/${fileName}` };
   }
 
-  // Otherwise, copy it to user-content folder.
   const relativePath = await copyToUserContent(projectPath, filePath);
   return { name: fileName, path: relativePath };
 }
@@ -375,6 +490,163 @@ async function importPptx(): Promise<unknown | null> {
   };
 }
 
+/**
+ * Export project: create {name}-exported.kproj/ with bundled assets.
+ * Returns exported project path, or null if canceled.
+ */
+async function exportProject(
+  _e: unknown,
+  projectPath: string,
+  projectText: string
+): Promise<string | null> {
+  try {
+    const projectDir = dirname(projectPath);
+    const projectObj = JSON.parse(projectText);
+    const projectName = projectObj.name || "Untitled";
+
+    // Generate export folder name
+    const safeName = safeFolderName(projectName);
+    let exportFolderName = `${safeName}-exported.kproj`;
+    let exportDir = join(projectDir, "..", exportFolderName);
+
+    // Check if export exists
+    if (await fileExists(join(exportDir, "project.json"))) {
+      const result = await dialog.showMessageBox({
+        type: "question",
+        title: "Export Exists",
+        message: `Export "${exportFolderName}" already exists.`,
+        buttons: ["Overwrite", "Rename", "Cancel"],
+        defaultId: 1,
+        cancelId: 2,
+      });
+
+      if (result.response === 2) return null;
+
+      if (result.response === 1) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        exportFolderName = `${safeName}-exported-${timestamp}.kproj`;
+        exportDir = join(projectDir, "..", exportFolderName);
+      }
+    }
+
+    // Create export directory
+    await mkdir(exportDir, { recursive: true });
+    const exportAssetsDir = join(exportDir, "assets");
+    await mkdir(exportAssetsDir, { recursive: true });
+
+    // Copy placeholders from project assets/
+    const projectAssetsDir = join(projectDir, "assets");
+    if (await fileExists(projectAssetsDir)) {
+      const placeholderFiles = await readdir(projectAssetsDir);
+      for (const file of placeholderFiles) {
+        const buf = await readFile(join(projectAssetsDir, file));
+        await writeFile(join(exportAssetsDir, file), buf);
+      }
+    }
+
+    // Collect user-content references
+    const userContentRefs = collectUserContentRefs(projectObj);
+    const sharedUserContent = getSharedUserContentPath();
+
+    // Copy user-content files to export assets/ with deduplication
+    const copiedFiles = new Map<string, string>();
+    for (const filename of userContentRefs) {
+      const srcPath = join(sharedUserContent, filename);
+      if (!(await fileExists(srcPath))) {
+        console.warn(`[export] user-content file not found: ${filename}`);
+        continue;
+      }
+
+      let destFilename = filename;
+      let destPath = join(exportAssetsDir, destFilename);
+
+      // Deduplicate if collision
+      if (await fileExists(destPath)) {
+        const ext = extname(filename);
+        const base = filename.slice(0, -ext.length);
+        let i = 1;
+        while (await fileExists(join(exportAssetsDir, `${base}_${i}${ext}`))) {
+          i++;
+        }
+        destFilename = `${base}_${i}${ext}`;
+        destPath = join(exportAssetsDir, destFilename);
+      }
+
+      const buf = await readFile(srcPath);
+      await writeFile(destPath, buf);
+      copiedFiles.set(filename, destFilename);
+    }
+
+    // Rewrite paths
+    rewritePathsForExport(projectObj);
+    projectObj.exported = true;
+
+    // Handle deduplication remapping
+    for (const [original, renamed] of copiedFiles.entries()) {
+      if (original !== renamed) {
+        const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }>;
+        const replaceInElement = (el: Record<string, unknown>): void => {
+          if (el.props && typeof el.props === "object") {
+            const props = el.props as Record<string, unknown>;
+            if (props.src === `assets/${original}`) props.src = `assets/${renamed}`;
+            if (props.background === `assets/${original}`) props.background = `assets/${renamed}`;
+          }
+          if (el.children && Array.isArray(el.children)) {
+            el.children.forEach(replaceInElement);
+          }
+        };
+        for (const scene of scenes) {
+          // Replace scene background
+          if (scene.background === `assets/${original}`) {
+            scene.background = `assets/${renamed}`;
+          }
+          // Replace element paths
+          if (scene.elements) {
+            scene.elements.forEach((el) => replaceInElement(el as Record<string, unknown>));
+          }
+        }
+      }
+    }
+
+    // Write exported project.json
+    const exportProjectPath = join(exportDir, "project.json");
+    await writeFile(exportProjectPath, JSON.stringify(projectObj, null, 2), "utf8");
+
+    // Show success message
+    await dialog.showMessageBox({
+      type: "info",
+      title: "Export Complete",
+      message: `Project exported successfully!`,
+      detail: `Location: ${exportDir}\n\nThe exported project is ready to share or deploy.`,
+      buttons: ["Open Folder", "OK"],
+      defaultId: 0,
+    }).then((result) => {
+      if (result.response === 0) {
+        import("node:child_process").then((cp) => {
+          if (process.platform === "win32") {
+            cp.exec(`explorer "${exportDir}"`);
+          } else if (process.platform === "darwin") {
+            cp.exec(`open "${exportDir}"`);
+          } else {
+            cp.exec(`xdg-open "${exportDir}"`);
+          }
+        });
+      }
+    });
+
+    return exportProjectPath;
+  } catch (err) {
+    console.error("[export] Failed:", err);
+    await dialog.showMessageBox({
+      type: "error",
+      title: "Export Failed",
+      message: `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      buttons: ["OK"],
+    });
+    return null;
+  }
+}
+
 // --- Connector host -------------------------------------------------------
 // Runs one connector per active data source (in this Node process) and forwards
 // each emitted value to the renderer that requested the live session. Only one
@@ -395,7 +667,26 @@ async function startData(e: Electron.IpcMainInvokeEvent, sources: SourceSpec[]):
   liveWebContentsId = e.sender.id;
   const emit = (v: ConnectorValue) => {
     const wc = liveWebContentsId != null ? webContents.fromId(liveWebContentsId) : null;
-    if (wc && !wc.isDestroyed()) wc.send("data:value", v);
+    if (wc && !wc.isDestroyed()) {
+      // Check if value contains an error (connectors emit { __error: message })
+      const isError = v.value != null && typeof v.value === "object" && "__error" in v.value;
+
+      if (isError) {
+        // Emit dataError event
+        wc.send("event:emit", {
+          kind: "dataError",
+          payload: { sourceId: v.sourceId, error: (v.value as { __error: string }).__error },
+          timestamp: v.at
+        });
+      } else {
+        // Emit dataChanged event
+        wc.send("event:emit", {
+          kind: "dataChanged",
+          payload: { sourceId: v.sourceId, value: v.value },
+          timestamp: v.at
+        });
+      }
+    }
   };
   for (const spec of sources) {
     const factory = getConnectorFactory(spec.kind);
@@ -404,77 +695,116 @@ async function startData(e: Electron.IpcMainInvokeEvent, sources: SourceSpec[]):
     activeConnectors.push(conn);
     try {
       await conn.start();
-    } catch {
-      /* a bad source shouldn't kill the session */
+    } catch (err) {
+      // Emit dataError event for startup failures
+      const wc = liveWebContentsId != null ? webContents.fromId(liveWebContentsId) : null;
+      if (wc && !wc.isDestroyed()) {
+        wc.send("event:emit", {
+          kind: "dataError",
+          payload: {
+            sourceId: spec.id,
+            error: err instanceof Error ? err.message : String(err)
+          },
+          timestamp: Date.now()
+        });
+      }
     }
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // No default application menu — the editor has its own TopBar and a kiosk
   // must show no chrome. This removes the File/Edit/View/Window/Help bar.
   Menu.setApplicationMenu(null);
 
-  // Serve project assets via the privileged scheme. The pathname is a
-  // uri-encoded absolute file path; stream it back. Constrain to existing
-  // files only (net.fetch of a file URL handles missing files as errors).
+  // Ensure Exports/ and shared user-content/ exist
+  await mkdir(getExportsPath(), { recursive: true });
+  await mkdir(getSharedUserContentPath(), { recursive: true });
+
+  // Serve project assets via the privileged scheme. Resolves paths based on
+  // exported flag for working vs bundled projects.
   protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
-    // kioskasset://load/<encoded-abs-path>  -> decode the path after the host.
-    const encoded = url.pathname.replace(/^\/+/, "");
-    const absPath = normalize(decodeURIComponent(encoded));
-    const fileUrl = pathToFileURL(absPath).toString();
+    // kioskasset://load/<encoded-project-dir>/<relative-path>
+    const fullPath = url.pathname.replace(/^\/+/, "");
+    const decoded = decodeURIComponent(fullPath);
 
     console.log(`[${ASSET_SCHEME}] Request: ${request.url}`);
-    console.log(`[${ASSET_SCHEME}] Decoded path: ${absPath}`);
-    console.log(`[${ASSET_SCHEME}] File URL: ${fileUrl}`);
+    console.log(`[${ASSET_SCHEME}] Decoded: ${decoded}`);
+
+    // Parse project directory and relative path
+    // Look for .kproj/ boundary
+    const kprojMatch = decoded.match(/^(.+\.kproj)[/\\](.+)$/);
+
+    let absPath: string;
+
+    if (!kprojMatch) {
+      // Fallback: treat entire decoded path as absolute
+      absPath = normalize(decoded);
+    } else {
+      const projectDir = kprojMatch[1];
+      const relativePath = kprojMatch[2];
+
+      console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
+      console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
+
+      const exported = await isProjectExported(projectDir);
+      console.log(`[${ASSET_SCHEME}] Exported: ${exported}`);
+
+      // Resolve based on exported flag and path prefix
+      if (relativePath.startsWith("user-content/")) {
+        if (exported) {
+          // Exported: user-content refs should have been rewritten to assets/
+          absPath = normalize(join(projectDir, "assets", basename(relativePath)));
+          console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
+        } else {
+          // Working: resolve user-content/ from app root
+          absPath = normalize(join(getAppRoot(), relativePath));
+        }
+      } else if (relativePath.startsWith("assets/")) {
+        // Both: assets/ resolves from project dir
+        absPath = normalize(join(projectDir, relativePath));
+      } else {
+        // No prefix: absolute path fallback
+        absPath = normalize(decoded);
+      }
+    }
+
+    const fileUrl = pathToFileURL(absPath).toString();
+    console.log(`[${ASSET_SCHEME}] Resolved: ${absPath}`);
 
     try {
-      // Forward Range header for video seeking/streaming
       const fetchHeaders = new Headers();
       const range = request.headers.get("range");
       if (range) {
         fetchHeaders.set("Range", range);
-        console.log(`[${ASSET_SCHEME}] Range request: ${range}`);
+        console.log(`[${ASSET_SCHEME}] Range: ${range}`);
       }
 
       const response = await net.fetch(fileUrl, { headers: fetchHeaders });
-      console.log(`[${ASSET_SCHEME}] Fetch success: ${response.status}`);
+      console.log(`[${ASSET_SCHEME}] Fetch: ${response.status}`);
 
-      // Ensure correct MIME type based on file extension
+      // Ensure correct MIME type
       const ext = extname(absPath).toLowerCase();
       const mimeMap: Record<string, string> = {
-        ".mp4": "video/mp4",
-        ".webm": "video/webm",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".ogg": "audio/ogg",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".svg": "image/svg+xml",
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
       };
       const contentType = mimeMap[ext] || response.headers.get("content-type") || "application/octet-stream";
-      console.log(`[${ASSET_SCHEME}] Content-Type: ${contentType}`);
 
-      // Copy all relevant headers from original response
       const headers = new Headers();
       headers.set("Content-Type", contentType);
       headers.set("Accept-Ranges", "bytes");
 
-      // Preserve original Content-Length and Range headers if present
       const contentLength = response.headers.get("content-length");
       if (contentLength) headers.set("Content-Length", contentLength);
 
       const contentRange = response.headers.get("content-range");
       if (contentRange) headers.set("Content-Range", contentRange);
 
-      return new Response(response.body, {
-        status: response.status,
-        headers,
-      });
+      return new Response(response.body, { status: response.status, headers });
     } catch (err) {
       console.error(`[${ASSET_SCHEME}] Failed to load ${absPath}:`, err);
       return new Response("Not Found", { status: 404 });
@@ -507,6 +837,7 @@ app.whenReady().then(() => {
   ipcMain.handle("project:pick", pickProject);
   ipcMain.handle("project:save", saveProject);
   ipcMain.handle("project:ensureWorkspace", ensureWorkspace);
+  ipcMain.handle("project:export", exportProject);
   ipcMain.handle("assets:save", saveAsset);
   ipcMain.handle("assets:pick", pickImage);
   ipcMain.handle("content:pick", pickContent);
@@ -519,6 +850,40 @@ app.whenReady().then(() => {
     return { width, height };
   });
   ipcMain.handle("kiosk:info", () => ({ kiosk: IS_KIOSK, projectPath: KIOSK_PROJECT }));
+  ipcMain.handle("analytics:write", async (_e, path: string, data: string, appendMode: boolean) => {
+    try {
+      // Resolve to absolute path (relative paths are resolved against userData)
+      const absPath = isAbsolute(path) ? normalize(path) : join(app.getPath("userData"), path);
+
+      // Security: Validate path is within safe boundaries (userData or temp)
+      const userDataDir = app.getPath("userData");
+      const tempDir = app.getPath("temp");
+      const isInUserData = absPath.startsWith(userDataDir);
+      const isInTemp = absPath.startsWith(tempDir);
+
+      if (!isInUserData && !isInTemp) {
+        return {
+          success: false,
+          error: `Path outside allowed directories. Must be in ${userDataDir} or ${tempDir}`
+        };
+      }
+
+      // Ensure parent directory exists
+      await mkdir(dirname(absPath), { recursive: true });
+
+      // Write or append
+      if (appendMode) {
+        await appendFile(absPath, data + "\n", "utf-8");
+      } else {
+        await writeFile(absPath, data, "utf-8");
+      }
+
+      return { success: true };
+    } catch (err) {
+      console.error("[IPC] analytics:write failed:", err);
+      return { success: false, error: String(err) };
+    }
+  });
   ipcMain.handle("window:fullscreen", (e, on: boolean) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w) return;

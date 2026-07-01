@@ -4,7 +4,6 @@ import { isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importPickedImage, importContentFile, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
-import { MaskEditorModal } from "./MaskEditorModal.js";
 
 /**
  * Debounce a value to reduce rapid history entries. The value updates
@@ -39,11 +38,40 @@ function useDebouncedCallback<T extends (...args: any[]) => void>(
 export function PropertiesPanel() {
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
+  const selectedIds = useEditor((s) => s.selectedIds);
   const updateElement = useEditor((s) => s.updateElement);
   const updateProps = useEditor((s) => s.updateElementProps);
   const removeElement = useEditor((s) => s.removeElement);
 
-  const el = scene.elements.find((e) => e.id === selectedId) ?? null;
+  // Helper to find element recursively
+  const findElement = (elements: any[], id: string): any => {
+    for (const el of elements) {
+      if (el.id === id) return el;
+      if (el.children) {
+        const found = findElement(el.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Helper to find parent layer/collection of an element
+  const findParentLayer = (elements: any[], childId: string): any => {
+    for (const el of elements) {
+      if ((el.type === "layer" || el.type === "collection") && el.children) {
+        // Direct child?
+        if (el.children.some((c: any) => c.id === childId)) {
+          return el;
+        }
+        // Recurse
+        const found = findParentLayer(el.children, childId);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const el = findElement(scene.elements, selectedId ?? "") ?? null;
 
   // IMPORTANT: Call all hooks BEFORE any conditional returns (Rules of Hooks)
   // Debounce geometry changes to avoid creating history entry per keystroke
@@ -56,6 +84,54 @@ export function PropertiesPanel() {
     300
   );
   const debouncedNumCb = (k: keyof Element) => (v: string) => debouncedNum(k, v);
+
+  // Multi-select mode
+  if (selectedIds.size > 0) {
+    const elements = Array.from(selectedIds).map(id => findElement(scene.elements, id)).filter(Boolean);
+    if (elements.length === 0) return <SceneSettings />;
+
+    // All same type? Show common properties
+    const firstType = elements[0].type;
+    const allSameType = elements.every(e => e.type === firstType);
+
+    if (allSameType && firstType === "layer") {
+      return <MultiLayerProperties elements={elements} />;
+    }
+
+    // Check if all selected elements are direct children of the same layer
+    const parentLayer = findParentLayer(scene.elements, elements[0].id);
+    if (parentLayer) {
+      const allSameParent = elements.every(el => {
+        const parent = findParentLayer(scene.elements, el.id);
+        return parent?.id === parentLayer.id;
+      });
+
+      if (allSameParent) {
+        // All selected elements are children of same layer -> show layer props
+        return (
+          <div style={panel}>
+            <div style={heading}>Properties · layer</div>
+            <div style={{ color: "#94a3b8", fontSize: 11, padding: "4px 4px 8px" }}>
+              {elements.length} children selected
+            </div>
+            <TypeFields element={parentLayer} updateProps={updateProps} />
+          </div>
+        );
+      }
+    }
+
+    return (
+      <div style={panel}>
+        <div style={heading}>Multi-select ({elements.length})</div>
+        <div style={{ color: "#94a3b8", fontSize: 12, padding: "8px 4px" }}>
+          {allSameType ? `${elements.length} ${firstType} elements selected` : "Mixed element types selected"}
+        </div>
+        <div style={{ color: "#64748b", fontSize: 11, padding: "4px" }}>
+          Ctrl+click to add/remove from selection
+        </div>
+      </div>
+    );
+  }
 
   // No selection: show scene settings (size + background) instead.
   if (!el) return <SceneSettings />;
@@ -604,10 +680,45 @@ function SceneSettings() {
   );
 }
 
+/** Properties for multiple selected layers: show common layer controls. */
+function MultiLayerProperties({ elements }: { elements: Element[] }) {
+  const updateElement = useEditor((s) => s.updateElement);
+
+  // Get common values (use first element as reference)
+  const firstEl = elements[0];
+  const commonLocked = elements.every(e => e.locked === firstEl.locked);
+
+  return (
+    <div style={panel}>
+      <div style={heading}>Multi-Layer Properties ({elements.length})</div>
+
+      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+        Layer Lock
+      </div>
+      <Row label="Locked">
+        <input
+          type="checkbox"
+          checked={commonLocked && (firstEl.locked ?? false)}
+          onChange={(e) => {
+            elements.forEach(el => updateElement(el.id, { locked: e.target.checked }));
+          }}
+        />
+      </Row>
+      <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
+        {commonLocked ? "All layers have the same lock state" : "Mixed lock states"}
+      </div>
+
+      <div style={{ color: "#64748b", fontSize: 11, marginTop: 12, padding: "4px" }}>
+        Tint and mask editing available for single-layer selection only.
+      </div>
+    </div>
+  );
+}
+
 /** Properties for a layer: tint overlay, mask editor, lock control. */
 function LayerFields({ el }: { el: Element }) {
   const updateElement = useEditor((s) => s.updateElement);
-  const [showMaskEditor, setShowMaskEditor] = useState(false);
+  const startMaskEditing = useEditor((s) => s.startMaskEditing);
   const tint = el.tint ?? { color: "#000000", opacity: 0 };
   const hasMask = !!el.mask;
 
@@ -647,7 +758,7 @@ function LayerFields({ el }: { el: Element }) {
           </div>
           <button
             style={{ ...chooseBtn, padding: "4px 8px", fontSize: 11 }}
-            onClick={() => setShowMaskEditor(true)}
+            onClick={() => startMaskEditing(el.id)}
           >
             Edit Mask
           </button>
@@ -662,7 +773,7 @@ function LayerFields({ el }: { el: Element }) {
       {!hasMask && (
         <button
           style={chooseBtn}
-          onClick={() => setShowMaskEditor(true)}
+          onClick={() => startMaskEditing(el.id)}
         >
           Create Mask
         </button>
@@ -681,10 +792,6 @@ function LayerFields({ el }: { el: Element }) {
       <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
         When locked, layer and children cannot be selected or edited on canvas.
       </div>
-
-      {showMaskEditor && (
-        <MaskEditorModal layerId={el.id} onClose={() => setShowMaskEditor(false)} />
-      )}
     </>
   );
 }

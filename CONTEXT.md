@@ -5,6 +5,8 @@
 ### Project
 A kiosk experience. Contains Scenes, defines canvas size (one size for all scenes—a kiosk has one screen), and data connectors (input sources for live bindings, output sinks for analytics export).
 
+**Storage model (2026-07):** Projects stored as `.kproj` folders in `<app-dir>/Exports/`. Each contains `project.json` + `assets/` subfolder. Assets reference shared `<app-dir>/user-content/` library (not per-project folders). Export action creates bundled sibling with `{name}-exported.kproj` suffix — copies user-content refs into bundled `assets/`, rewrites paths, sets `exported: true` flag. See ADR 0008.
+
 ### Scene
 A screen in the kiosk experience. Contains Elements arranged on a canvas. Background can be a color or image.
 
@@ -19,7 +21,7 @@ A visual or interactive component on a Scene. Types: rectangle, text, image, vid
 ### Layer
 Fullscreen organizational container with visual effects. Unlike other elements, layers are always positioned at `x:0, y:0` with dimensions matching the project canvas size. Layers provide:
 - **Tint**: Color overlay with adjustable opacity (0-1). Applied on top of all children.
-- **Mask**: Vector clip region (rect or polygon) that hides content outside the shape. Defined as an array of points in scene-absolute coordinates.
+- **Mask**: Vector clip region (rect or polygon) that hides content outside the shape. Defined as an array of points in scene-absolute coordinates. **Layer-exclusive feature** — only layers can have masks (schema allows mask on all element types as artifact, but editor and renderer ignore mask on non-layer elements).
 - **Lock**: When locked, the layer and all its children cannot be selected or edited on the canvas.
 - **Depth limit**: Maximum 2 layers deep (layer can contain a layer, but not deeper).
 
@@ -155,7 +157,30 @@ All kiosk events flow through EventBus: Player emits navigation (`sceneEnter`/`s
 
 **Drag optimization:** Pause history capture during pointer drag (pointerdown → pointerup), resume with forced final snapshot. Prevents 100s of micro-move snapshots per drag.
 
+**Modal edit optimization:** Pause history capture during modal editing sessions (mask edit, inline text edit). Resume on Done/Cancel with single snapshot. Entire edit session = one undo entry.
+
 **Files:** `store.ts` (Zustand actions), `useUndoRedo.ts` (capture logic, keyboard wiring, pause/resume).
+
+### Modal Editing (2026-06)
+
+**Pattern:** Certain editor operations enter modal state — exclusive focus mode blocking other interactions.
+
+**Active modals:**
+- **Inline text edit** (`editingId`) — double-click text/button element
+- **Mask edit** (`maskEditingId`) — Edit Mask button on layer
+
+**Enforcement:** Store-level guards. `isModalEditingActive()` computed from `editingId || maskEditingId`. All mutation actions check modal state, return early if active:
+- `selectElement()` — blocked (can't switch selection mid-edit)
+- `setActiveScene()` — blocked (can't switch scenes mid-edit)
+- Undo/redo — blocked (modal has explicit Done/Cancel)
+- Drag/resize/rotate — blocked (beginMove/beginResize/beginRotate check modal)
+- Delete/copy/paste — blocked (keyboard shortcuts check modal)
+
+**Allowed during modal:** Zoom/pan canvas (view-only, no state mutation), Escape (cancel modal), modal-specific shortcuts (Enter closes polygon, Delete removes last point).
+
+**Undo behavior:** Modal edit pauses history capture (via pauseCapture/resumeCapture hooks). Done commits entire edit as single snapshot. Cancel exits without snapshot. Prevents per-action pollution (50-point polygon = 1 undo entry, not 50).
+
+**Why modal instead of inline?** Past bugs from incomplete interaction blocking (undo mid-edit, selection change orphans staged data, keyboard shortcuts fire unexpectedly). Modal = systemic prevention, single enforcement point.
 
 ### Modularity
 - **Engine** (`packages/engine`): framework-agnostic core (React only in render/, uses plain classes/functions elsewhere)

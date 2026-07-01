@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Binding, Element } from "../model/types.js";
+import { eventBus } from "../events/EventBus.js";
 
 /**
  * React-facing interface: subscribe to binding changes and resolve elements
@@ -14,13 +15,10 @@ export interface BindingContext {
 }
 
 /**
- * Connector-facing interface: update live data values and manage lifecycle.
- * Used by the main process / connector host to push data into the renderer.
+ * Lifecycle interface: manage binding state (reset, cache invalidation).
+ * Used by Player unmount and editor project changes.
  */
 export interface BindingHost {
-  /** Update a data source value. Triggers subscribers. */
-  setValue(sourceId: string, value: unknown): void;
-
   /** Clear all live values (e.g., end live session). */
   reset(): void;
 
@@ -31,7 +29,7 @@ export interface BindingHost {
 /**
  * Internal implementation: consolidates bindingStore + applyBindings + useBindings
  * behind clean React and connector interfaces. Singleton pattern (one shared instance).
- * Cache clears on every setValue (Option D: reuse within render cycle only).
+ * Subscribes to EventBus dataChanged events. Cache clears on every data update.
  */
 class BindingContextImpl implements BindingContext, BindingHost {
   private values = new Map<string, unknown>();
@@ -42,12 +40,26 @@ class BindingContextImpl implements BindingContext, BindingHost {
   // Valid only within one version (between setValues). Cleared on bump().
   private cache = new Map<string, { version: number; resolved: Element }>();
 
-  // BindingHost methods
-  setValue(sourceId: string, value: unknown): void {
+  constructor() {
+    // Subscribe to dataChanged events from EventBus
+    eventBus.subscribe("dataChanged", this.onDataChanged);
+  }
+
+  // EventBus listener: update value map on dataChanged
+  private onDataChanged = (event: { payload: Record<string, unknown> }): void => {
+    const { sourceId, value } = event.payload;
+    if (typeof sourceId === "string") {
+      this.setValue(sourceId, value);
+    }
+  };
+
+  // Internal setValue (private, only called by EventBus listener)
+  private setValue(sourceId: string, value: unknown): void {
     this.values.set(sourceId, value);
     this.bump();
   }
 
+  // BindingHost methods (lifecycle only)
   reset(): void {
     if (this.values.size === 0) return;
     this.values.clear();

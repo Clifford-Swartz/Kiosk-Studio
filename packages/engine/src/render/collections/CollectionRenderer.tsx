@@ -438,8 +438,8 @@ function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeInde
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
 
   // Size cards to 16:9 aspect (standard video), fit within 60% of container height
-  const maxH = height * 0.6;
-  const maxW = width * 0.85;
+  const maxH = height * 0.65;
+  const maxW = width * 0.80;
   const aspectW = maxH * (16 / 9);
   const cardW = Math.min(aspectW, maxW);
   const cardH = cardW * (9 / 16);
@@ -495,7 +495,7 @@ function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeInde
 function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
   const n = list.length || 1;
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
-  const cardW = width * 0.4;
+  const cardW = width * 0.6;
   const { dragIndex, onPointerDown } = useSwipe(!!playing, cardW, (d) => setActiveIndex(idx + d));
   const dragging = dragIndex !== 0;
   const pos = idx + dragIndex;
@@ -633,7 +633,7 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
 function NavButton({ side, onClick }: { side: "left" | "right" | "up" | "down"; onClick: () => void }) {
   const isVertical = side === "up" || side === "down";
   const cssProp = side === "up" ? "top" : side === "down" ? "bottom" : side;
-  const offset = isVertical ? "12%" : 8;
+  const offset = isVertical ? "15%" : 8;
   const positionStyle = isVertical
     ? { [cssProp]: offset, left: "50%", transform: "translateX(-50%)" }
     : { [cssProp]: offset, top: "50%", transform: "translateY(-50%)" };

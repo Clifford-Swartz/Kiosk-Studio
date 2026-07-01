@@ -2,7 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties
 import { resolveSrc, Player, type Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importImageBlob, projectAssetBase, importImageFromPath } from "./assets.js";
-import { collectTargets, snapMove, snapResize, type GuideLine, type SnapTargets } from "./snap.js";
+import { collectTargets, snapMove, snapResize, snapRotation, type GuideLine, type SnapTargets } from "./snap.js";
+import { MaskOverlay } from "./MaskOverlay.js";
 
 /** On-screen snap threshold in px; converted to scene units via the scale. */
 const SNAP_PX = 8;
@@ -45,6 +46,15 @@ type DragState =
       startY: number;
       rect: { x: number; y: number; width: number; height: number };
     }
+  | {
+      kind: "rotate";
+      id: string;
+      startX: number;
+      startY: number;
+      startRotation: number;
+      centerX: number;
+      centerY: number;
+    }
   | null;
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -58,6 +68,93 @@ function textPropFor(type: string): "text" | "label" {
   return type === "button" ? "label" : "text";
 }
 
+/**
+ * Recursively flatten all elements including children of layers.
+ * Converts child coordinates from relative to absolute by accumulating parent offsets.
+ */
+function flattenElements(elements: Element[], parentX = 0, parentY = 0): Element[] {
+  const result: Element[] = [];
+  for (const el of elements) {
+    if (el.type !== "layer") {
+      // Non-layer elements: add with absolute coordinates
+      result.push({
+        ...el,
+        x: el.x + parentX,
+        y: el.y + parentY,
+      });
+    }
+    if (el.children) {
+      // Layer elements: recurse with accumulated offset
+      const offsetX = el.type === "layer" ? el.x : 0;
+      const offsetY = el.type === "layer" ? el.y : 0;
+      result.push(...flattenElements(el.children, parentX + offsetX, parentY + offsetY));
+    }
+  }
+  return result;
+}
+
+/**
+ * Find an element by ID, searching recursively through nested children.
+ * Returns the element with absolute coordinates if it's nested in a layer.
+ */
+function findElementRecursive(elements: Element[], id: string, parentX = 0, parentY = 0): Element | null {
+  for (const el of elements) {
+    if (el.id === id) {
+      // Found it - return with absolute coordinates if nested
+      return el.type === "layer" ? el : {
+        ...el,
+        x: el.x + parentX,
+        y: el.y + parentY,
+      };
+    }
+    if (el.children) {
+      const offsetX = el.type === "layer" ? el.x : 0;
+      const offsetY = el.type === "layer" ? el.y : 0;
+      const found = findElementRecursive(el.children, id, parentX + offsetX, parentY + offsetY);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if element OR its parent layer is locked.
+ * Locked elements/layers cannot be selected or edited.
+ */
+function isLockedOrChildOfLocked(elements: Element[], id: string): boolean {
+  for (const el of elements) {
+    if (el.id === id) {
+      // Direct match - check if locked
+      return el.locked ?? false;
+    }
+    if ((el.type === "layer" || el.type === "collection") && el.children) {
+      // Check children recursively
+      const found = isLockedOrChildOfLocked(el.children, id);
+      if (found) {
+        // Child is locked, OR parent container is locked
+        return true;
+      }
+      // Check if this parent is locked and contains the child
+      if (el.locked && el.children.some(c => c.id === id || hasDescendant(c, id))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if element has a descendant with given ID (recursive).
+ */
+function hasDescendant(el: Element, id: string): boolean {
+  if (!el.children) return false;
+  for (const child of el.children) {
+    if (child.id === id) return true;
+    if (hasDescendant(child, id)) return true;
+  }
+  return false;
+}
+
 export function Canvas({
   pauseCapture,
   resumeCapture
@@ -69,7 +166,11 @@ export function Canvas({
   const project = useEditor((s) => s.project);
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
+  const editingId = useEditor((s) => s.editingId);
+  const maskEditingId = useEditor((s) => s.maskEditingId);
   const selectElement = useEditor((s) => s.selectElement);
+  const startTextEditing = useEditor((s) => s.startTextEditing);
+  const exitTextEditing = useEditor((s) => s.exitTextEditing);
   const updateProps = useEditor((s) => s.updateElementProps);
   const addImageElement = useEditor((s) => s.addImageElement);
   const filePath = useEditor((s) => s.filePath);
@@ -84,7 +185,6 @@ export function Canvas({
   const hostRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const finalScale = scale * viewport.userZoom;
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const drag = useRef<DragState>(null);
   // Tracks the previous pointer-down for manual double-click detection.
@@ -173,8 +273,9 @@ export function Canvas({
     return () => host.removeEventListener("wheel", handleWheel);
   }, [setUserZoom, setPan]);
 
-  const selected = scene.elements.find((e) => e.id === selectedId) ?? null;
-  const editingEl = scene.elements.find((e) => e.id === editingId) ?? null;
+  const selected = selectedId ? findElementRecursive(scene.elements, selectedId) : null;
+  const editingEl = editingId ? findElementRecursive(scene.elements, editingId) : null;
+  const maskEditingEl = maskEditingId ? findElementRecursive(scene.elements, maskEditingId) : null;
 
   // Paste (Ctrl+V) an image from the clipboard -> add as an image element.
   useEffect(() => {
@@ -231,13 +332,13 @@ export function Canvas({
     if (!d) return;
     const st = useEditor.getState();
     const sc = scaleRef.current * st.canvasViewport.userZoom;
-    const dx = (e.clientX - d.startX) / sc;
-    const dy = (e.clientY - d.startY) / sc;
-    const threshold = SNAP_PX / sc;
-    const targets = dragTargets.current;
     const snapOn = st.snapEnabled !== altHeld.current; // Alt inverts
 
     if (d.kind === "move") {
+      const dx = (e.clientX - d.startX) / sc;
+      const dy = (e.clientY - d.startY) / sc;
+      const threshold = SNAP_PX / sc;
+      const targets = dragTargets.current;
       const rect = { x: Math.round(d.elX + dx), y: Math.round(d.elY + dy), width: d.width, height: d.height };
       if (snapOn && targets) {
         const r = snapMove(rect, targets, threshold);
@@ -247,7 +348,11 @@ export function Canvas({
         st.moveElement(d.id, rect.x, rect.y);
         setGuides([]);
       }
-    } else {
+    } else if (d.kind === "resize") {
+      const dx = (e.clientX - d.startX) / sc;
+      const dy = (e.clientY - d.startY) / sc;
+      const threshold = SNAP_PX / sc;
+      const targets = dragTargets.current;
       const raw = applyResize(d.handle, d.rect, dx, dy);
       if (snapOn && targets) {
         const r = snapResize(raw, d.handle, targets, threshold);
@@ -257,6 +362,28 @@ export function Canvas({
         st.resizeElement(d.id, raw);
         setGuides([]);
       }
+    } else if (d.kind === "rotate") {
+      // Convert client coords to scene coords
+      const stage = hostRef.current?.querySelector("[data-stage]") as HTMLElement | null;
+      if (!stage) return;
+      const r = stage.getBoundingClientRect();
+      const sceneX = (e.clientX - r.left) / sc;
+      const sceneY = (e.clientY - r.top) / sc;
+
+      // Calculate angle from center to cursor
+      const dx = sceneX - d.centerX;
+      const dy = sceneY - d.centerY;
+      const angleRad = Math.atan2(dy, dx);
+      const angleDeg = angleRad * (180 / Math.PI);
+
+      // Apply snapping (15° increments)
+      let finalAngle = angleDeg;
+      if (snapOn) {
+        finalAngle = snapRotation(angleDeg);
+      }
+
+      st.updateElement(d.id, { rotation: Math.round(finalAngle) });
+      setGuides([]);
     }
   }).current;
 
@@ -297,6 +424,8 @@ export function Canvas({
 
   function beginMove(e: ReactPointerEvent, el: Element) {
     e.stopPropagation();
+    // Block if element or parent layer is locked
+    if (isLockedOrChildOfLocked(scene.elements, el.id)) return;
     selectElement(el.id);
     pauseCapture(); // Pause history tracking during drag
     drag.current = {
@@ -316,6 +445,8 @@ export function Canvas({
 
   function beginResize(e: ReactPointerEvent, el: Element, handle: Handle) {
     e.stopPropagation();
+    // Block if element or parent layer is locked
+    if (isLockedOrChildOfLocked(scene.elements, el.id)) return;
     pauseCapture(); // Pause history tracking during resize
     drag.current = {
       kind: "resize",
@@ -330,10 +461,29 @@ export function Canvas({
     window.addEventListener("pointerup", endDrag);
   }
 
+  function beginRotate(e: ReactPointerEvent, el: Element) {
+    e.stopPropagation();
+    // Block if element or parent layer is locked
+    if (isLockedOrChildOfLocked(scene.elements, el.id)) return;
+    pauseCapture(); // Pause history tracking during rotation
+    const centerX = el.x + el.width / 2;
+    const centerY = el.y + el.height / 2;
+    drag.current = {
+      kind: "rotate",
+      id: el.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      startRotation: el.rotation,
+      centerX,
+      centerY,
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", endDrag);
+  }
+
   function beginTextEdit(el: Element) {
     if (!TEXT_EDITABLE.has(el.type)) return;
-    selectElement(el.id);
-    setEditingId(el.id);
+    startTextEditing(el.id);
   }
 
   return (
@@ -353,9 +503,10 @@ export function Canvas({
           if (hostRef.current) hostRef.current.style.cursor = "grabbing";
           window.addEventListener("pointermove", onPanMove);
           window.addEventListener("pointerup", onPanEnd);
-        } else {
+        } else if (!maskEditingId) {
+          // Only clear selection when NOT in mask editing mode
           selectElement(null);
-          setEditingId(null);
+          exitTextEditing();
         }
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -403,18 +554,27 @@ export function Canvas({
               }
             `}</style>
           )}
+          {selectedId && !editingId && (
+            <style>{`
+              [data-element-id="${selectedId}"] {
+                z-index: 999999 !important;
+              }
+            `}</style>
+          )}
           <Player
             project={project}
             initialSceneId={scene.id}
             assetBaseUrl={assetBaseUrl}
             live={true}
+            editorMode={true}
           />
         </div>
 
         {/* Interaction layer: one transparent box per element matching its real
             rect, so a click hits the element actually under the cursor (not the
-            topmost full-stage wrapper). zIndex mirrors draw order. */}
-        {scene.elements.map((el) => (
+            topmost full-stage wrapper). zIndex mirrors draw order.
+            Layers are excluded (not selectable on canvas), but their children are included. */}
+        {flattenElements(scene.elements).map((el) => (
           <div
             key={`hit-${el.id}`}
             onPointerDown={(e) => {
@@ -442,9 +602,10 @@ export function Canvas({
               height: el.height,
               transform: `translate(${el.x}px, ${el.y}px) rotate(${el.rotation}deg)`,
               transformOrigin: "center center",
-              zIndex: el.zIndex,
-              // Hidden hit target while editing this element, so clicks reach the
-              // inline editor instead of restarting a drag.
+              // Selected element gets mechanical priority (999999) to match visual priority
+              zIndex: selectedId === el.id ? 999999 : el.zIndex,
+              // Hidden hit target only while editing (inline editor needs clicks)
+              // Selected elements keep active hit target for drag
               pointerEvents: editingId === el.id ? "none" : "auto",
               cursor: "move",
             }}
@@ -456,12 +617,21 @@ export function Canvas({
             element={editingEl}
             scale={finalScale}
             onChange={(v) => updateProps(editingEl.id, { [textPropFor(editingEl.type)]: v })}
-            onDone={() => setEditingId(null)}
+            onDone={() => exitTextEditing()}
           />
         )}
 
-        {selected && !editingEl && (
-          <SelectionOverlay element={selected} scale={finalScale} onResize={beginResize} />
+        {maskEditingEl && (
+          <MaskOverlay
+            element={maskEditingEl}
+            scale={finalScale}
+            pauseCapture={pauseCapture}
+            resumeCapture={resumeCapture}
+          />
+        )}
+
+        {selected && !editingEl && !maskEditingEl && (
+          <SelectionOverlay element={selected} scale={finalScale} onResize={beginResize} onRotate={beginRotate} />
         )}
 
         {/* Alignment guides: thin lines at snapped positions during a drag. */}
@@ -609,12 +779,18 @@ function SelectionOverlay({
   element,
   scale,
   onResize,
+  onRotate,
 }: {
   element: Element;
   scale: number;
   onResize: (e: ReactPointerEvent, el: Element, handle: Handle) => void;
+  onRotate: (e: ReactPointerEvent, el: Element) => void;
 }) {
-  const handleSize = 10 / scale; // keep handles a constant on-screen size
+  const visualSize = 10 / scale; // keep visual handles a constant on-screen size
+  const hitSize = 20 / scale; // larger hit area for easier grabbing
+  const rotationHandleSize = 20 / scale;
+  const rotationHandleDistance = 30 / scale;
+
   return (
     <div
       style={{
@@ -626,24 +802,86 @@ function SelectionOverlay({
         transform: `translate(${element.x}px, ${element.y}px) rotate(${element.rotation}deg)`,
         transformOrigin: "center center",
         outline: `${2 / scale}px solid #38bdf8`,
+        zIndex: 999999,
         pointerEvents: "none",
       }}
     >
+      {/* Connection line from top-center to rotation handle */}
+      <div
+        style={{
+          position: "absolute",
+          left: element.width / 2 - 0.5 / scale,
+          top: -rotationHandleDistance,
+          width: 1 / scale,
+          height: rotationHandleDistance,
+          background: "#38bdf8",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Rotation handle */}
+      <div
+        onPointerDown={(e) => onRotate(e, element)}
+        style={{
+          position: "absolute",
+          left: element.width / 2 - rotationHandleSize / 2,
+          top: -rotationHandleDistance - rotationHandleSize / 2,
+          width: rotationHandleSize,
+          height: rotationHandleSize,
+          background: "#38bdf8",
+          border: `${2 / scale}px solid #0b1016`,
+          borderRadius: "50%",
+          pointerEvents: "auto",
+          cursor: "grab",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 999998,
+        }}
+      >
+        {/* Rotation icon (circular arrow) */}
+        <svg
+          width={rotationHandleSize * 0.6}
+          height={rotationHandleSize * 0.6}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#0b1016"
+          strokeWidth="2"
+          style={{ pointerEvents: "none" }}
+        >
+          <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+        </svg>
+      </div>
+
+      {/* Resize handles */}
       {HANDLES.map((h) => (
         <div
           key={h}
           onPointerDown={(e) => onResize(e, element, h)}
           style={{
             position: "absolute",
-            width: handleSize,
-            height: handleSize,
-            background: "#38bdf8",
-            border: `${1 / scale}px solid #0b1016`,
+            width: hitSize,
+            height: hitSize,
             pointerEvents: "auto",
             cursor: `${h}-resize`,
-            ...handlePosition(h, element.width, element.height, handleSize),
+            zIndex: 999998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...handlePosition(h, element.width, element.height, hitSize),
           }}
-        />
+        >
+          <div
+            style={{
+              width: visualSize,
+              height: visualSize,
+              background: "#38bdf8",
+              border: `${1 / scale}px solid #0b1016`,
+              pointerEvents: "none",
+            }}
+          />
+        </div>
       ))}
     </div>
   );

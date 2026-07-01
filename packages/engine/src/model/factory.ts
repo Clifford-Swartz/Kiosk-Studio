@@ -55,7 +55,7 @@ const TYPE_DEFAULTS: Record<
     height: 96,
     props: { label: "Button", fill: "#2563eb", color: "#ffffff", radius: 12, fontSize: 28 },
   },
-  group: { width: 320, height: 240, props: {} },
+  layer: { width: 1920, height: 1080, props: {} },
   collection: {
     width: 900,
     height: 520,
@@ -86,8 +86,8 @@ export function createElement(
     id: partial.id ?? newId(type),
     type,
     name: partial.name,
-    x: partial.x ?? 100,
-    y: partial.y ?? 100,
+    x: partial.x ?? (type === "layer" ? 0 : 100),
+    y: partial.y ?? (type === "layer" ? 0 : 100),
     width: partial.width ?? d.width,
     height: partial.height ?? d.height,
     rotation: partial.rotation ?? 0,
@@ -96,6 +96,9 @@ export function createElement(
     props: { ...d.props, ...(partial.props ?? {}) },
     bindings: partial.bindings ?? [],
     interactions: partial.interactions ?? [],
+    tint: partial.tint,
+    mask: partial.mask,
+    locked: partial.locked ?? false,
     children: partial.children,
   };
 }
@@ -115,14 +118,14 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
 export function createProject(partial: Partial<Project> = {}): Project {
   const scenes = partial.scenes ?? [createScene({ name: "Home" })];
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     id: partial.id ?? newId("proj"),
     name: partial.name ?? "Untitled",
     width: partial.width ?? 1920,
     height: partial.height ?? 1080,
     startSceneId: partial.startSceneId ?? scenes[0]?.id,
     scenes,
-    dataSources: partial.dataSources ?? [],
+    dataConnectors: partial.dataConnectors ?? [],
     enableBackButton: partial.enableBackButton ?? false,
     enableHomeButton: partial.enableHomeButton ?? false,
   };

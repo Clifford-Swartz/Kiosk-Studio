@@ -35,6 +35,34 @@ export function MaskEditorModal({ layerId, onClose }: MaskEditorProps) {
   const sceneWidth = project.width;
   const sceneHeight = project.height;
 
+  // Calculate fit-contain dimensions to preserve aspect ratio
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasStyle, setCanvasStyle] = useState({ width: sceneWidth, height: sceneHeight });
+
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+
+      const scaleX = containerWidth / sceneWidth;
+      const scaleY = containerHeight / sceneHeight;
+      const scale = Math.min(scaleX, scaleY);
+
+      setCanvasStyle({
+        width: sceneWidth * scale,
+        height: sceneHeight * scale,
+      });
+    };
+
+    updateCanvasSize();
+    const observer = new ResizeObserver(updateCanvasSize);
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [sceneWidth, sceneHeight]);
+
   // Draw the scene preview + mask overlay
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,6 +103,17 @@ export function MaskEditorModal({ layerId, onClose }: MaskEditorProps) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#0f172a";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Redraw scene elements after clear
+        ctx.save();
+        ctx.filter = "grayscale(0.8) opacity(0.4)";
+        scene.elements.forEach((el) => {
+          if (el.id === layerId) return;
+          ctx.fillStyle = "#64748b";
+          ctx.fillRect(el.x, el.y, el.width, el.height);
+        });
+        ctx.restore();
+
         ctx.fillStyle = "rgba(59, 130, 246, 0.3)";
         ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
@@ -226,20 +265,31 @@ export function MaskEditorModal({ layerId, onClose }: MaskEditorProps) {
             Done
           </button>
         </div>
-        <canvas
-          ref={canvasRef}
-          width={sceneWidth}
-          height={sceneHeight}
+        <div
+          ref={containerRef}
           style={{
-            width: "100%",
-            height: "100%",
-            cursor: isDragging ? "crosshair" : "default",
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
           }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onDoubleClick={handleDoubleClick}
-        />
+        >
+          <canvas
+            ref={canvasRef}
+            width={sceneWidth}
+            height={sceneHeight}
+            style={{
+              width: canvasStyle.width,
+              height: canvasStyle.height,
+              cursor: isDragging ? "crosshair" : "default",
+            }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onDoubleClick={handleDoubleClick}
+          />
+        </div>
       </div>
     </div>
   );

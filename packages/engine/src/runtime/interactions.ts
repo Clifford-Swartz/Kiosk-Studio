@@ -1,4 +1,5 @@
-import type { Action, Interaction, Project } from "../model/types.js";
+import type { Action, Interaction, Project, Element } from "../model/types.js";
+import { eventBus } from "../events/EventBus.js";
 
 /**
  * Context handed to actions when an interaction runs. Carries scene navigation
@@ -19,13 +20,53 @@ export interface PlayerContext {
 }
 
 /** Execute every action in an interaction, in order. */
-export function runInteraction(interaction: Interaction, ctx: PlayerContext): void {
+export function runInteraction(interaction: Interaction, ctx: PlayerContext, element?: Element): void {
+  // Emit element event for trigger
+  if (element) {
+    switch (interaction.trigger) {
+      case "tap":
+        eventBus.emit({
+          kind: "elementTap",
+          payload: { elementId: element.id, elementType: element.type }
+        });
+        break;
+      case "hover":
+        eventBus.emit({
+          kind: "elementHover",
+          payload: { elementId: element.id, elementType: element.type }
+        });
+        break;
+      case "press":
+        eventBus.emit({
+          kind: "elementPress",
+          payload: { elementId: element.id, elementType: element.type }
+        });
+        break;
+      case "release":
+        eventBus.emit({
+          kind: "elementRelease",
+          payload: { elementId: element.id, elementType: element.type }
+        });
+        break;
+    }
+  }
+
   for (const action of interaction.actions) {
-    runAction(action, ctx);
+    runAction(action, ctx, element);
   }
 }
 
-function runAction(action: Action, ctx: PlayerContext): void {
+function runAction(action: Action, ctx: PlayerContext, element?: Element): void {
+  // Emit actionRun event
+  eventBus.emit({
+    kind: "actionRun",
+    payload: {
+      actionType: action.type,
+      params: action.params,
+      elementId: element?.id
+    }
+  });
+
   switch (action.type) {
     case "goToScene": {
       const sceneId = action.params.sceneId;

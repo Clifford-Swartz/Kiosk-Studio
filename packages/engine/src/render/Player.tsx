@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Element, Project, Scene } from "../model/types.js";
 import { ElementRenderer, resolveSrc } from "./ElementRenderer.js";
 import { runInteraction, type PlayerContext } from "../runtime/interactions.js";
 import { elementResolver, bindingHost, overrideHost } from "../data/ElementResolver.js";
 import { createTransitionController } from "../runtime/TransitionController.js";
 import { NavigationOverlay } from "./NavigationOverlay.js";
+import { eventBus } from "../events/EventBus.js";
+import { analyticsStore } from "../analytics/AnalyticsStore.js";
 
 export interface PlayerProps {
   project: Project;
@@ -16,6 +18,8 @@ export interface PlayerProps {
   live?: boolean;
   /** Hide audio element icons (for play/kiosk mode, not editor preview). */
   hideAudioIcons?: boolean;
+  /** True when rendering in editor mode; disables button interaction overlays. */
+  editorMode?: boolean;
 }
 
 /**
@@ -29,7 +33,7 @@ interface SceneLayer {
   key: string;
 }
 
-export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false }: PlayerProps) {
+export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false }: PlayerProps) {
   // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
@@ -42,6 +46,21 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
 
   const keyCounterRef = useRef(0);
+  const sessionId = useMemo(() => crypto.randomUUID(), []);
+  const sceneEnterTimeRef = useRef<number>(0);
+
+  // Session lifecycle: emit sessionStart on mount, sessionEnd on unmount
+  useEffect(() => {
+    eventBus.setSessionId(sessionId);
+    eventBus.emit({ kind: "sessionStart", payload: {} });
+    analyticsStore.init(project.dataConnectors);
+
+    return () => {
+      eventBus.emit({ kind: "sessionEnd", payload: {} });
+      analyticsStore.flushAll(project.dataConnectors);
+      analyticsStore.stop();
+    };
+  }, [project.dataConnectors, sessionId]);
 
   // Sync initialSceneId prop changes (for Canvas scene switching)
   // Issue 1 fix: Removed sceneLayers from deps to prevent infinite loop
@@ -137,6 +156,15 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       setNavigationHistory([]);
     }
 
+    // Emit sceneExit with duration
+    if (sceneEnterTimeRef.current > 0) {
+      const duration = Date.now() - sceneEnterTimeRef.current;
+      eventBus.emit({
+        kind: "sceneExit",
+        payload: { sceneId: currentSceneId, duration }
+      });
+    }
+
     // Skip transition for first home scene load or if no transition defined
     const isFirstHomeSceneLoad = targetScene.id === homeSceneId && !hasLoadedHomeSceneRef.current;
 
@@ -144,9 +172,26 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       if (isFirstHomeSceneLoad) {
         hasLoadedHomeSceneRef.current = true;
       }
+
+      // Update scene tracking and emit sceneEnter
+      sceneEnterTimeRef.current = Date.now();
+      eventBus.setCurrentScene(targetScene.id);
+      eventBus.emit({
+        kind: "sceneEnter",
+        payload: { sceneId: targetScene.id, sceneName: targetScene.name }
+      });
+
       setSceneLayers([{ scene: targetScene, key: `${targetScene.id}-${++keyCounterRef.current}` }]);
       return;
     }
+
+    // Update scene tracking and emit sceneEnter
+    sceneEnterTimeRef.current = Date.now();
+    eventBus.setCurrentScene(targetScene.id);
+    eventBus.emit({
+      kind: "sceneEnter",
+      payload: { sceneId: targetScene.id, sceneName: targetScene.name }
+    });
 
     // Run transition
     setIsTransitioning(true);
@@ -276,7 +321,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     for (const element of allElements) {
       for (const interaction of element.interactions) {
         if (interaction.trigger === "enterScene") {
-          runInteraction(interaction, ctx);
+          runInteraction(interaction, ctx, element);
         }
       }
     }
@@ -287,7 +332,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const handleTap = useCallback(
     (element: Element) => {
       for (const interaction of element.interactions) {
-        if (interaction.trigger === "tap") runInteraction(interaction, ctx);
+        if (interaction.trigger === "tap") runInteraction(interaction, ctx, element);
       }
     },
     [ctx]
@@ -297,7 +342,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     (element: Element) => {
       for (const interaction of element.interactions) {
         if (interaction.trigger === "hover") {
-          runInteraction(interaction, ctx);
+          runInteraction(interaction, ctx, element);
         }
       }
     },
@@ -308,7 +353,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     (element: Element) => {
       for (const interaction of element.interactions) {
         if (interaction.trigger === "hoverEnd") {
-          runInteraction(interaction, ctx);
+          runInteraction(interaction, ctx, element);
         }
       }
     },
@@ -354,10 +399,25 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const currentSceneId = sceneLayers[sceneLayers.length - 1]?.scene.id ?? "";
   const homeSceneId = project.startSceneId ?? project.scenes[0]?.id;
 
+  // Collect all masks from scene elements (recursive)
+  function collectMasks(elements: Element[]): Array<{ id: string; mask: Element["mask"] }> {
+    const masks: Array<{ id: string; mask: Element["mask"] }> = [];
+    for (const el of elements) {
+      if (el.type === "layer" && el.mask) {
+        masks.push({ id: el.id, mask: el.mask });
+      }
+      if (el.children) {
+        masks.push(...collectMasks(el.children));
+      }
+    }
+    return masks;
+  }
+
   return (
     <ScaledStage width={project.width} height={project.height} stageRef={stageRef}>
       {sceneLayers.map((layer) => {
         const { scene, key } = layer;
+        const sceneMasks = collectMasks(scene.elements);
 
         // Issue 4 fix: Apply explicit fallback to prevent undefined backgrounds
         const background = scene.background || "#000000";
@@ -384,15 +444,50 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
               overflow: "hidden",
             }}
           >
+            {/* Consolidated SVG defs for all layer masks in this scene */}
+            {sceneMasks.length > 0 && (
+              <svg
+                width={project.width}
+                height={project.height}
+                viewBox={`0 0 ${project.width} ${project.height}`}
+                style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', opacity: 0 }}
+              >
+                <defs>
+                  {sceneMasks.map(({ id, mask }) => {
+                    if (!mask) return null;
+                    const clipPathId = `mask-${id}`;
+                    return (
+                      <clipPath key={id} id={clipPathId} clipPathUnits="userSpaceOnUse">
+                        {mask.type === 'rect' ? (
+                          <rect
+                            x={mask.points[0][0]}
+                            y={mask.points[0][1]}
+                            width={mask.points[1][0] - mask.points[0][0]}
+                            height={mask.points[1][1] - mask.points[0][1]}
+                          />
+                        ) : (
+                          <polygon points={mask.points.map(p => `${p[0]},${p[1]}`).join(' ')} />
+                        )}
+                      </clipPath>
+                    );
+                  })}
+                </defs>
+              </svg>
+            )}
             <div className="scene-elements" style={{ position: "absolute", inset: 0 }}>
               {scene.elements.map((el) => {
                 // Unified resolution: bindings + overrides in one call.
                 const resolved = live ? resolveElement(el) : el;
 
-                // Force audio elements to opacity: 0 in play/kiosk mode
-                const finalElement = resolved.type === "audio"
-                  ? { ...resolved, opacity: 1 }
+                // Enforce fullscreen geometry for layers
+                const layerEnforced = resolved.type === "layer"
+                  ? { ...resolved, x: 0, y: 0, width: project.width, height: project.height }
                   : resolved;
+
+                // Force audio elements to opacity: 1 in play/kiosk mode
+                const finalElement = layerEnforced.type === "audio"
+                  ? { ...layerEnforced, opacity: 1 }
+                  : layerEnforced;
 
                 if (resolved.type === "audio") {
                   console.log('[Player] Audio element opacity:', finalElement.opacity);
@@ -409,6 +504,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
                     playing
                     onAudioRef={onAudioRef}
                     onVideoRef={onVideoRef}
+                    editorMode={editorMode}
                   />
                 );
               })}

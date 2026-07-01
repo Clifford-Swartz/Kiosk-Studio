@@ -44,13 +44,14 @@ function MenuDropdown({
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onUndo, onRedo, canUndo, canRedo }: {
+export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onExport, onUndo, onRedo, canUndo, canRedo }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
+  onExport: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -76,6 +77,7 @@ export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx
           { label: "Open…", action: onOpen },
           { label: "Save", action: onSave },
           { label: "Save As…", action: onSaveAs },
+          { label: "Export Project…", action: onExport },
           { label: "Import PPTX…", action: onImportPptx },
         ]}
       />

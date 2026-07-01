@@ -20,6 +20,13 @@ export type { PlayerProps } from "./render/Player.js";
 export { runInteraction } from "./runtime/interactions.js";
 export type { PlayerContext } from "./runtime/interactions.js";
 
+// Events: central event bus for all kiosk system events.
+export { eventBus } from "./events/EventBus.js";
+export type { KioskEvent, EventKind, EventListener, Unsubscribe } from "./events/events.js";
+
+// Analytics: event buffering and export (CSV, JSON, REST, console).
+export { analyticsStore } from "./analytics/AnalyticsStore.js";
+
 // Element resolution: unified bindings + overrides pipeline.
 export { elementResolver, bindingHost, overrideHost } from "./data/ElementResolver.js";
 export type { ElementResolver, BindingHost, OverrideHost } from "./data/ElementResolver.js";
