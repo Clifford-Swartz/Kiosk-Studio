@@ -206,7 +206,12 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
         />
       );
 
-    case "button":
+    case "button": {
+      const fillType = str(props.fillType, "color");
+      const imageSrc = resolveSrc(str(props.imageSrc, ""), assetBaseUrl);
+      const imageFit = str(props.imageFit, "cover") as React.CSSProperties["objectFit"];
+      const radius = num(props.radius, 12);
+
       return (
         <>
           {/* Visual button element at its normal z-index */}
@@ -215,18 +220,45 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
             role="button"
             style={{
               ...baseStyle,
-              backgroundColor: str(props.fill, "#2563eb"),
+              backgroundColor: fillType === "color" ? str(props.fill, "#2563eb") : "transparent",
               color: str(props.color, "#ffffff"),
-              borderRadius: num(props.radius, 12),
+              borderRadius: radius,
               fontSize: num(props.fontSize, 28),
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               cursor: "pointer",
               pointerEvents: editorMode ? "none" : "none", // Disable events on visual element
+              overflow: "hidden",
             }}
           >
-            {str(props.label, "Button")}
+            {/* Image fill background */}
+            {fillType === "image" && (
+              <img
+                src={imageSrc}
+                alt=""
+                draggable={false}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: imageFit,
+                  pointerEvents: "none",
+                  zIndex: 0,
+                }}
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src.startsWith("app://placeholder")) {
+                    target.src = PLACEHOLDER_FALLBACK;
+                  }
+                }}
+              />
+            )}
+            {/* Label text */}
+            <span style={{ position: "relative", zIndex: 1 }}>
+              {str(props.label, "Button")}
+            </span>
             {children}
           </div>
           {/* Invisible interaction overlay at high z-index (only in player mode) */}
@@ -241,7 +273,7 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
                 transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
                 transformOrigin: "top left",
                 zIndex: 999999, // Very high z-index to capture events above everything
-                borderRadius: num(props.radius, 12), // Match visual button's shape
+                borderRadius: radius, // Match visual button's shape
                 cursor: "pointer",
                 pointerEvents: "auto",
               }}
@@ -252,6 +284,7 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
           )}
         </>
       );
+    }
 
     case "layer": {
       const { tint, mask } = element;
@@ -550,12 +583,41 @@ interface VideoElementProps {
  */
 function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [hasError, setHasError] = useState(false);
+  const [shouldLoad, setShouldLoad] = useState(false);
   const { props } = element;
 
   const src = resolveSrc(str(props.src, ""), assetBaseUrl);
   const rawSrc = str(props.src, "");
   const hasSource = rawSrc && rawSrc.trim() !== "";
+
+  // Lazy-load video when in viewport (with margin for preloading just before scroll)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !hasSource) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setShouldLoad(true);
+            observer.disconnect(); // Load once, never unload
+          }
+        });
+      },
+      { root: null, rootMargin: "200px" } // root: null = observe relative to viewport
+    );
+
+    // Fallback: force load after 2s if observer never fires (e.g., scaled viewport issues)
+    const timeout = setTimeout(() => setShouldLoad(true), 2000);
+
+    observer.observe(container);
+    return () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+    };
+  }, [hasSource]);
 
   // Register video ref with Player and setup event listeners
   useEffect(() => {
@@ -629,8 +691,8 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
   }, [element.id, playing, props.autoplay, hasSource, src]);
 
   return (
-    <div data-element-id={element.id} style={baseStyle}>
-      {hasSource && (
+    <div ref={containerRef} data-element-id={element.id} style={baseStyle}>
+      {hasSource && shouldLoad && (
         <video
           ref={videoRef}
           src={src}
@@ -638,7 +700,7 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
           loop={bool(props.loop, true)}
           muted={bool(props.muted, true)}
           playsInline
-          preload={str(props.preload, "auto") as "auto" | "metadata" | "none"}
+          preload={str(props.preload, "metadata") as "auto" | "metadata" | "none"}
           onError={(e) => {
             const video = e.currentTarget;
             const errorCode = video.error?.code;

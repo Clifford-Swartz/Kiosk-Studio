@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import type { Element } from "@kiosk/engine";
 import { isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importPickedImage, importContentFile, validateAudioFile } from "./assets.js";
+import { importContentFile, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
 
 /**
@@ -235,7 +235,72 @@ function TypeFields({
       return (
         <>
           <Row label="Label"><Text value={str(p.label, "Button")} onChange={(v) => set("label", v)} /></Row>
-          <Row label="Fill"><Color value={str(p.fill, "#2563eb")} onChange={(v) => set("fill", v)} /></Row>
+
+          <Row label="Fill Type">
+            <select
+              value={str(p.fillType, "color")}
+              onChange={(e) => set("fillType", e.target.value)}
+              style={input}
+            >
+              <option value="color">Color</option>
+              <option value="image">Image</option>
+            </select>
+          </Row>
+
+          {str(p.fillType, "color") === "color" ? (
+            <Row label="Fill Color">
+              <Color value={str(p.fill, "#2563eb")} onChange={(v) => set("fill", v)} />
+            </Row>
+          ) : (
+            <>
+              <button
+                style={chooseBtn}
+                onClick={async () => {
+                  const filePath = useEditor.getState().filePath;
+                  if (!filePath) {
+                    alert("Save the project first.");
+                    return;
+                  }
+                  const rel = await importContentFile("image");
+                  if (rel) set("imageSrc", rel);
+                }}
+              >
+                Choose fill image…
+              </button>
+              <Row label="Image Source">
+                <input
+                  type="text"
+                  value={str(p.imageSrc) === "__placeholder__" ? "" : str(p.imageSrc)}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    set("imageSrc", val === "" ? "__placeholder__" : val);
+                  }}
+                  placeholder="Using default placeholder"
+                  style={input}
+                />
+              </Row>
+              {str(p.imageSrc) !== "" && str(p.imageSrc) !== "__placeholder__" && (
+                <button
+                  style={{ ...chooseBtn, marginTop: 4, fontSize: 11, padding: "4px 8px" }}
+                  onClick={() => set("imageSrc", "__placeholder__")}
+                >
+                  Reset to placeholder
+                </button>
+              )}
+              <Row label="Image Fit">
+                <select
+                  value={str(p.imageFit, "cover")}
+                  onChange={(e) => set("imageFit", e.target.value)}
+                  style={input}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="fill">Fill</option>
+                </select>
+              </Row>
+            </>
+          )}
+
           <Row label="Text"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
           <Row label="Radius"><Num value={n(p.radius, 12)} onChange={(v) => set("radius", Number(v))} /></Row>
         </>
@@ -251,7 +316,7 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const rel = await importContentFile(filePath, "image");
+              const rel = await importContentFile("image");
               if (rel) set("src", rel);
             }}
           >
@@ -306,7 +371,7 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const rel = await importContentFile(filePath, "video");
+              const rel = await importContentFile("video");
               if (rel) set("src", rel);
             }}
           >
@@ -407,7 +472,7 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const rel = await importContentFile(filePath, "audio");
+              const rel = await importContentFile("audio");
               if (rel) {
                 const validation = validateAudioFile(rel);
                 if (!validation.valid) {
@@ -549,7 +614,7 @@ function SceneSettings() {
             alert("Save the project first.");
             return;
           }
-          const rel = await importContentFile(filePath, "image");
+          const rel = await importContentFile("image");
           if (rel) updateActiveScene({ background: rel });
         }}
       >
@@ -901,9 +966,7 @@ function CollectionFields({
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
-                const picked = await window.kiosk.pickImage();
-                if (!picked) return;
-                const rel = await importPickedImage(picked);
+                const rel = await importContentFile("video");
                 if (rel) patchItem(it.id, { image: rel });
               }}
               title="Choose focused image or video"
@@ -916,9 +979,7 @@ function CollectionFields({
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
-                const picked = await window.kiosk.pickImage();
-                if (!picked) return;
-                const rel = await importPickedImage(picked);
+                const rel = await importContentFile("image");
                 if (rel) patchItem(it.id, { thumbnail: rel });
               }}
               title="Choose thumbnail image"

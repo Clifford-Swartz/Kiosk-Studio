@@ -42,7 +42,7 @@ const TYPE_DEFAULTS: Record<
       muted: true,
       volume: 1.0,
       playbackRate: 1.0,
-      preload: "auto",
+      preload: "metadata",
     },
   },
   audio: {
@@ -53,7 +53,16 @@ const TYPE_DEFAULTS: Record<
   button: {
     width: 280,
     height: 96,
-    props: { label: "Button", fill: "#2563eb", color: "#ffffff", radius: 12, fontSize: 28 },
+    props: {
+      label: "Button",
+      fillType: "color",
+      fill: "#2563eb",
+      imageSrc: "__placeholder__",
+      imageFit: "cover",
+      color: "#ffffff",
+      radius: 12,
+      fontSize: 28
+    },
   },
   layer: { width: 1920, height: 1080, props: {} },
   collection: {

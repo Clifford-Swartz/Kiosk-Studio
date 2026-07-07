@@ -27,6 +27,7 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
   const { undo, redo, pauseCapture, resumeCapture, canUndo, canRedo } = useUndoRedo();
 
   const selectedId = useEditor((s) => s.selectedId);
+  const selectedIds = useEditor((s) => s.selectedIds);
   const isModalEditingActive = useEditor((s) => s.isModalEditingActive);
   const removeElement = useEditor((s) => s.removeElement);
   const copyElement = useEditor((s) => s.copyElement);
@@ -90,15 +91,15 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
     },
     "Mod+C": {
       action: () => copyElement(),
-      enabled: () => !!selectedId && !isModalEditingActive(),
-      description: "Copy selected element",
+      enabled: () => (!!selectedId || selectedIds.size > 0) && !isModalEditingActive(),
+      description: "Copy selected element(s)",
       preventDefault: true,
       log: true,
     },
     "Mod+X": {
       action: () => cutElement(),
-      enabled: () => !!selectedId && !isModalEditingActive(),
-      description: "Cut selected element",
+      enabled: () => (!!selectedId || selectedIds.size > 0) && !isModalEditingActive(),
+      description: "Cut selected element(s)",
       preventDefault: true,
       log: true,
     },
@@ -111,19 +112,27 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
     },
     "Delete": {
       action: () => {
-        if (selectedId) removeElement(selectedId);
+        if (selectedIds.size > 0) {
+          Array.from(selectedIds).forEach(id => removeElement(id));
+        } else if (selectedId) {
+          removeElement(selectedId);
+        }
       },
-      enabled: () => !!selectedId && !isModalEditingActive(),
-      description: "Delete selected element",
+      enabled: () => (!!selectedId || selectedIds.size > 0) && !isModalEditingActive(),
+      description: "Delete selected element(s)",
       preventDefault: true,
       log: true,
     },
     "Backspace": {
       action: () => {
-        if (selectedId) removeElement(selectedId);
+        if (selectedIds.size > 0) {
+          Array.from(selectedIds).forEach(id => removeElement(id));
+        } else if (selectedId) {
+          removeElement(selectedId);
+        }
       },
-      enabled: () => !!selectedId && !isModalEditingActive(),
-      description: "Delete selected element",
+      enabled: () => (!!selectedId || selectedIds.size > 0) && !isModalEditingActive(),
+      description: "Delete selected element(s)",
       preventDefault: true,
       log: true,
     },

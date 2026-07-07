@@ -3,6 +3,34 @@ import type { Action, ActionType } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 
 /**
+ * Recursively find an element by ID, including children of layers/collections.
+ */
+function findElementRecursive(elements: any[], id: string): any {
+  for (const el of elements) {
+    if (el.id === id) return el;
+    if (el.children) {
+      const found = findElementRecursive(el.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Recursively collect all elements, including children of layers/collections.
+ */
+function flattenAllElements(elements: any[]): any[] {
+  const result: any[] = [];
+  for (const el of elements) {
+    result.push(el);
+    if (el.children) {
+      result.push(...flattenAllElements(el.children));
+    }
+  }
+  return result;
+}
+
+/**
  * Triggers & Actions editor for the selected element. Lists the element's
  * interactions (trigger → actions); add a tap trigger, then add/configure
  * actions (Go to scene / Set property / Toggle visibility) with param forms.
@@ -17,11 +45,12 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
   const updateAction = useEditor((s) => s.updateAction);
   const removeAction = useEditor((s) => s.removeAction);
 
-  const el = scene.elements.find((e) => e.id === elementId);
+  const el = findElementRecursive(scene.elements, elementId);
   if (!el) return null;
 
-  const otherElements = scene.elements.filter((e) => e.id !== elementId);
-  const targets = scene.elements; // setProp/toggle can target any element (incl. self)
+  const allElements = flattenAllElements(scene.elements);
+  const otherElements = allElements.filter((e) => e.id !== elementId);
+  const targets = allElements; // setProp/toggle can target any element (incl. self)
 
   return (
     <div style={{ marginTop: 14 }}>
@@ -69,7 +98,7 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                   <button style={{ ...miniBtn, marginLeft: "auto", color: "#fca5a5" }} onClick={() => removeInteraction(elementId, it.id)} title="Remove trigger">✕</button>
                 </div>
 
-                {it.actions.map((a, idx) => (
+                {it.actions.map((a: Action, idx: number) => (
                   <ActionRow
                     key={idx}
                     action={a}
@@ -135,7 +164,7 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
               {/* On Enter / On Press section */}
               <div style={section}>
                 <div style={sectionLabel}>On {isHover ? "Enter" : "Press"}</div>
-                {enter.actions.map((a, idx) => (
+                {enter.actions.map((a: Action, idx: number) => (
                   <ActionRow
                     key={idx}
                     action={a}
@@ -177,7 +206,7 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
               {/* On Exit / On Release section */}
               <div style={section}>
                 <div style={sectionLabel}>On {isHover ? "Exit" : "Release"}</div>
-                {exit.actions.map((a, idx) => (
+                {exit.actions.map((a: Action, idx: number) => (
                   <ActionRow
                     key={idx}
                     action={a}

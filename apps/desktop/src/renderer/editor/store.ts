@@ -38,8 +38,8 @@ export interface EditorState {
   historyNonce: number;
   /** Editor UI: snap-to-guides on/off (not part of the saved project). */
   snapEnabled: boolean;
-  /** Clipboard: holds a copy of the last copied/cut element. */
-  clipboard: Element | null;
+  /** Clipboard: holds a copy of the last copied/cut element(s). */
+  clipboard: Element | Element[] | null;
   /** Canvas viewport state (UI-only, not saved to project). */
   canvasViewport: {
     userZoom: number; // 1.0 = fit-to-window, range 0.1 to 5.0
@@ -678,23 +678,60 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   // --- clipboard ops ---
   copyElement: () => {
-    const { selectedId, activeScene } = get();
+    const { selectedId, selectedIds, activeScene } = get();
+    // Multi-select: copy all selected elements as array
+    if (selectedIds.size > 0) {
+      const scene = activeScene();
+      const els = Array.from(selectedIds)
+        .map(id => findElement(scene.elements, id))
+        .filter((el): el is Element => el !== null);
+      if (els.length > 0) set({ clipboard: els });
+      return;
+    }
+    // Single-select: copy one element
     if (!selectedId) return;
     const el = findElement(activeScene().elements, selectedId);
     if (el) set({ clipboard: el });
   },
 
   cutElement: () => {
-    const { selectedId, copyElement, removeElement, isModalEditingActive } = get();
-    if (isModalEditingActive() || !selectedId) return;
+    const { selectedId, selectedIds, copyElement, removeElement, isModalEditingActive } = get();
+    if (isModalEditingActive()) return;
     copyElement();
-    removeElement(selectedId);
+    // Multi-select: delete all
+    if (selectedIds.size > 0) {
+      Array.from(selectedIds).forEach(id => removeElement(id));
+      return;
+    }
+    // Single-select: delete one
+    if (selectedId) removeElement(selectedId);
   },
 
   pasteElement: () => {
     const { clipboard, isModalEditingActive } = get();
     if (isModalEditingActive() || !clipboard) return;
-    // Deep clone element with new IDs for itself + all children, offset by 20px
+
+    // Multi-paste: array of elements
+    if (Array.isArray(clipboard)) {
+      const cloned = clipboard.map((el) => {
+        const c = deepCloneElement(el);
+        c.x = el.x + 20;
+        c.y = el.y + 20;
+        return c;
+      });
+      set((state) => ({
+        project: withActiveScene(state, (scene) => ({
+          ...scene,
+          elements: [...scene.elements, ...cloned],
+        })),
+        selectedIds: new Set(cloned.map(c => c.id)),
+        selectedId: null,
+        dirty: true,
+      }));
+      return;
+    }
+
+    // Single-paste: one element
     const cloned = deepCloneElement(clipboard);
     cloned.x = clipboard.x + 20;
     cloned.y = clipboard.y + 20;

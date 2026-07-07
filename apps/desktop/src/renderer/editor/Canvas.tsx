@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { resolveSrc, Player, type Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importImageBlob, projectAssetBase, importImageFromPath } from "./assets.js";
+import { importImageBlob, useProjectAssetBase, importImageFromPath } from "./assets.js";
 import { collectTargets, snapMove, snapResize, snapRotation, type GuideLine, type SnapTargets } from "./snap.js";
 import { MaskOverlay } from "./MaskOverlay.js";
 
@@ -39,6 +39,12 @@ function firstImageFile(items: DataTransferItemList | null, files: FileList | nu
 type DragState =
   | { kind: "move"; id: string; startX: number; startY: number; elX: number; elY: number; width: number; height: number }
   | {
+      kind: "multi-move";
+      elements: Array<{ id: string; startX: number; startY: number }>;
+      startX: number;
+      startY: number;
+    }
+  | {
       kind: "resize";
       id: string;
       handle: Handle;
@@ -54,6 +60,13 @@ type DragState =
       startRotation: number;
       centerX: number;
       centerY: number;
+    }
+  | {
+      kind: "marquee";
+      startX: number;
+      startY: number;
+      currentX: number;
+      currentY: number;
     }
   | null;
 
@@ -166,6 +179,7 @@ export function Canvas({
   const project = useEditor((s) => s.project);
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
+  const selectedIds = useEditor((s) => s.selectedIds);
   const editingId = useEditor((s) => s.editingId);
   const maskEditingId = useEditor((s) => s.maskEditingId);
   const selectElement = useEditor((s) => s.selectElement);
@@ -174,7 +188,7 @@ export function Canvas({
   const updateProps = useEditor((s) => s.updateElementProps);
   const addImageElement = useEditor((s) => s.addImageElement);
   const filePath = useEditor((s) => s.filePath);
-  const assetBaseUrl = projectAssetBase(filePath);
+  const assetBaseUrl = useProjectAssetBase(filePath);
   // Canvas size is project-wide (one size for all scenes).
   const sceneW = useEditor((s) => s.project.width);
   const sceneH = useEditor((s) => s.project.height);
@@ -187,6 +201,7 @@ export function Canvas({
   const finalScale = scale * viewport.userZoom;
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const drag = useRef<DragState>(null);
+  const [, forceUpdate] = useState({});
   // Tracks the previous pointer-down for manual double-click detection.
   const lastDown = useRef<{ id: string; t: number } | null>(null);
   // Snap targets computed once at drag start; whether Alt is held (overrides snap).
@@ -334,7 +349,19 @@ export function Canvas({
     const sc = scaleRef.current * st.canvasViewport.userZoom;
     const snapOn = st.snapEnabled !== altHeld.current; // Alt inverts
 
-    if (d.kind === "move") {
+    if (d.kind === "marquee") {
+      // Update marquee box - store client coords, convert to scene on endDrag
+      drag.current = { ...d, currentX: e.clientX, currentY: e.clientY };
+      forceUpdate({}); // Trigger re-render to show marquee box
+    } else if (d.kind === "multi-move") {
+      const dx = (e.clientX - d.startX) / sc;
+      const dy = (e.clientY - d.startY) / sc;
+      // Move all elements by same delta (no snapping for multi-move)
+      d.elements.forEach(({ id, startX, startY }) => {
+        st.moveElement(id, Math.round(startX + dx), Math.round(startY + dy));
+      });
+      setGuides([]);
+    } else if (d.kind === "move") {
       const dx = (e.clientX - d.startX) / sc;
       const dy = (e.clientY - d.startY) / sc;
       const threshold = SNAP_PX / sc;
@@ -389,6 +416,43 @@ export function Canvas({
 
   const endDrag = useRef(() => {
     try {
+      const d = drag.current;
+      if (d?.kind === "marquee") {
+        // Convert marquee to scene coords and select overlapping elements
+        const stage = hostRef.current?.querySelector("[data-stage]") as HTMLElement | null;
+        if (stage) {
+          const r = stage.getBoundingClientRect();
+          const st = useEditor.getState();
+          const sc = scaleRef.current * st.canvasViewport.userZoom;
+
+          const x1 = (Math.min(d.startX, d.currentX) - r.left) / sc;
+          const y1 = (Math.min(d.startY, d.currentY) - r.top) / sc;
+          const x2 = (Math.max(d.startX, d.currentX) - r.left) / sc;
+          const y2 = (Math.max(d.startY, d.currentY) - r.top) / sc;
+
+          const marqueeRect = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+
+          // Find all elements overlapping marquee (using flattened list for absolute coords)
+          const scene = st.activeScene();
+          const overlapping = flattenElements(scene.elements)
+            .filter((el) => !isLockedOrChildOfLocked(scene.elements, el.id))
+            .filter((el) => {
+              // Check bounding box overlap (ignoring rotation for simplicity)
+              return !(
+                el.x + el.width < marqueeRect.x ||
+                el.x > marqueeRect.x + marqueeRect.width ||
+                el.y + el.height < marqueeRect.y ||
+                el.y > marqueeRect.y + marqueeRect.height
+              );
+            })
+            .map((el) => el.id);
+
+          if (overlapping.length > 0) {
+            st.selectElements(new Set(overlapping));
+          }
+        }
+      }
+
       drag.current = null;
       dragTargets.current = null;
       setGuides([]);
@@ -426,6 +490,30 @@ export function Canvas({
     e.stopPropagation();
     // Block if element or parent layer is locked
     if (isLockedOrChildOfLocked(scene.elements, el.id)) return;
+
+    // Multi-select move: clicked element is part of selection
+    if (selectedIds.size > 1 && selectedIds.has(el.id)) {
+      pauseCapture();
+      const elements = Array.from(selectedIds)
+        .map((id) => {
+          const elem = findElementRecursive(scene.elements, id);
+          return elem ? { id, startX: elem.x, startY: elem.y } : null;
+        })
+        .filter((e): e is { id: string; startX: number; startY: number } => e !== null);
+
+      drag.current = {
+        kind: "multi-move",
+        elements,
+        startX: e.clientX,
+        startY: e.clientY,
+      };
+      dragTargets.current = buildTargets(el.id); // Use clicked element for snap targets
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", endDrag);
+      return;
+    }
+
+    // Single-select move
     selectElement(el.id);
     pauseCapture(); // Pause history tracking during drag
     drag.current = {
@@ -504,9 +592,19 @@ export function Canvas({
           window.addEventListener("pointermove", onPanMove);
           window.addEventListener("pointerup", onPanEnd);
         } else if (!maskEditingId) {
-          // Only clear selection when NOT in mask editing mode
+          // Left-click on canvas background -> start marquee selection
           selectElement(null);
           exitTextEditing();
+
+          drag.current = {
+            kind: "marquee",
+            startX: e.clientX,
+            startY: e.clientY,
+            currentX: e.clientX,
+            currentY: e.clientY,
+          };
+          window.addEventListener("pointermove", onPointerMove);
+          window.addEventListener("pointerup", endDrag);
         }
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -630,9 +728,64 @@ export function Canvas({
           />
         )}
 
-        {selected && !editingEl && !maskEditingEl && (
+        {/* Single-select overlay */}
+        {selected && !editingEl && !maskEditingEl && selectedIds.size === 0 && (
           <SelectionOverlay element={selected} scale={finalScale} onResize={beginResize} onRotate={beginRotate} />
         )}
+
+        {/* Multi-select overlays (no handles, just outline) */}
+        {selectedIds.size > 0 && !editingEl && !maskEditingEl &&
+          Array.from(selectedIds).map((id) => {
+            const el = findElementRecursive(scene.elements, id);
+            if (!el) return null;
+            return (
+              <div
+                key={`sel-${id}`}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: el.width,
+                  height: el.height,
+                  transform: `translate(${el.x}px, ${el.y}px) rotate(${el.rotation}deg)`,
+                  transformOrigin: "center center",
+                  outline: `${2 / finalScale}px solid #38bdf8`,
+                  zIndex: 999999,
+                  pointerEvents: "none",
+                }}
+              />
+            );
+          })
+        }
+
+        {/* Marquee selection box */}
+        {drag.current?.kind === "marquee" && (() => {
+          const d = drag.current;
+          const stage = hostRef.current?.querySelector("[data-stage]") as HTMLElement | null;
+          if (!stage) return null;
+          const r = stage.getBoundingClientRect();
+
+          const x1 = (Math.min(d.startX, d.currentX) - r.left) / finalScale;
+          const y1 = (Math.min(d.startY, d.currentY) - r.top) / finalScale;
+          const x2 = (Math.max(d.startX, d.currentX) - r.left) / finalScale;
+          const y2 = (Math.max(d.startY, d.currentY) - r.top) / finalScale;
+
+          return (
+            <div
+              style={{
+                position: "absolute",
+                left: x1,
+                top: y1,
+                width: x2 - x1,
+                height: y2 - y1,
+                border: `${2 / finalScale}px solid #38bdf8`,
+                background: "rgba(56, 189, 248, 0.1)",
+                pointerEvents: "none",
+                zIndex: 999999,
+              }}
+            />
+          );
+        })()}
 
         {/* Alignment guides: thin lines at snapped positions during a drag. */}
         {guides.map((g, i) =>

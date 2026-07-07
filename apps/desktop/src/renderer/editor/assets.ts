@@ -1,4 +1,6 @@
+import type {} from "../../preload/api.js";
 import { useEditor } from "./store.js";
+import { useEffect, useState } from "react";
 
 /**
  * Base URL for resolving a project's relative asset paths. Uses the custom
@@ -6,11 +8,42 @@ import { useEditor } from "./store.js";
  * images load in dev (renderer is http://localhost) as well as production.
  * The directory is encoded as one segment; resolveSrc appends "assets/<name>",
  * and the main handler decodeURIComponent's the whole pathname.
+ *
+ * When no project file is saved yet, falls back to app root for user-content/ assets.
  */
-export function projectAssetBase(filePath: string | null): string | undefined {
-  if (!filePath) return undefined;
-  const dir = filePath.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
-  return `kioskasset://load/${encodeURIComponent(dir)}/`;
+let cachedAppRoot: string | null = null;
+
+export async function getAppRootCached(): Promise<string> {
+  if (cachedAppRoot === null) {
+    const root = await window.kiosk.getAppRoot();
+    cachedAppRoot = root ?? "";
+  }
+  return cachedAppRoot ?? "";
+}
+
+/**
+ * React hook version of projectAssetBase - returns stable value that updates
+ * when app root cache warms. Use in Canvas/Player components.
+ */
+export function useProjectAssetBase(_filePath: string | null): string | undefined {
+  const [appRoot, setAppRoot] = useState(cachedAppRoot);
+
+  useEffect(() => {
+    if (cachedAppRoot === null) {
+      getAppRootCached().then(setAppRoot);
+    }
+  }, []);
+
+  // Always return app root - user-content/ lives there in both dev and packaged
+  return appRoot ? `kioskasset://load/${encodeURIComponent(appRoot)}/` : undefined;
+}
+
+/**
+ * Sync version for non-React contexts (exports, protocol handler).
+ */
+export function projectAssetBase(_filePath: string | null): string | undefined {
+  // Always return app root - user-content/ lives there in both dev and packaged
+  return cachedAppRoot ? `kioskasset://load/${encodeURIComponent(cachedAppRoot)}/` : undefined;
 }
 
 /**
@@ -62,14 +95,13 @@ export async function importImageBlob(blob: Blob, suggestedName: string): Promis
 }
 
 /**
- * Import content (image, video, or audio) from the user-content folder or copy
+ * Import content (image, video, or audio) from the shared user-content folder or copy
  * from an external location. Returns the relative path to the file, or null if canceled.
  */
 export async function importContentFile(
-  projectPath: string,
   type: "image" | "video" | "audio"
 ): Promise<string | null> {
-  const picked = await window.kiosk.pickContent(projectPath, type);
+  const picked = await window.kiosk.pickContent(type);
   if (!picked) return null;
   return picked.path;
 }
@@ -94,7 +126,7 @@ export async function importPickedImage(
 export async function importImageFromPath(filePath: string): Promise<string | null> {
   const projectPath = await ensureProjectSaved();
   if (!projectPath) return null;
-  return window.kiosk.copyExternalFile(projectPath, filePath);
+  return window.kiosk.copyExternalFile(filePath);
 }
 
 /**

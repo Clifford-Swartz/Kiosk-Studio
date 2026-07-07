@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Player, parseProject } from "@kiosk/engine";
 import { EditorShell } from "./editor/EditorShell.js";
 import { useEditor } from "./editor/store.js";
-import { projectAssetBase } from "./editor/assets.js";
+import { projectAssetBase, getAppRootCached } from "./editor/assets.js";
 import { useLiveSession } from "./editor/liveSession.js";
 import { KioskRuntime } from "./kiosk/KioskRuntime.js";
 import { buildProjectFromDeck, type ParsedDeck } from "./editor/pptxImport.js";
@@ -46,11 +46,14 @@ export function App() {
 
   // On first run: if launched with --kiosk, load that project and go straight to
   // the fullscreen kiosk runtime. Otherwise load the bundled example into the
-  // editor store.
+  // editor store. Also warm the app root cache for user-content/ asset resolution.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        // Warm app root cache early for unsaved project asset resolution
+        getAppRootCached();
+
         const info = await window.kiosk.getKioskInfo();
         const path = info.kiosk ? info.projectPath ?? undefined : undefined;
         const text = await window.kiosk.loadProject(path);

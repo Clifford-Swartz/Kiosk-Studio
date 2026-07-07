@@ -236,7 +236,7 @@ async function loadProject(_e: unknown, projectPath?: string): Promise<string> {
   // Touch pathToFileURL so asset-relative resolution can be added later.
   void pathToFileURL(path);
   // Ensure user-content folder exists for this project.
-  await ensureUserContentFolder(path).catch(() => {
+  await ensureUserContentFolder().catch(() => {
     /* best effort; if it fails, the user will get an error when trying to add content */
   });
   return text;
@@ -305,20 +305,15 @@ async function saveProject(
   return path;
 }
 
-/** Get user-content folder path. For imports, always return shared app-root user-content/. */
-function getUserContentFolderPath(projectPath: string): string {
-  return getSharedUserContentPath();
-}
-
 /** Ensure shared user-content folder exists. */
-async function ensureUserContentFolder(projectPath: string): Promise<string> {
+async function ensureUserContentFolder(): Promise<string> {
   const dir = getSharedUserContentPath();
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
 /** Check if file is inside shared user-content folder. */
-function isFileInUserContentFolder(filePath: string, projectPath: string): boolean {
+function isFileInUserContentFolder(filePath: string): boolean {
   const resolved = resolve(filePath);
   const contentDir = resolve(getSharedUserContentPath());
   return resolved.startsWith(contentDir + sep);
@@ -328,10 +323,7 @@ function isFileInUserContentFolder(filePath: string, projectPath: string): boole
  * Copy file to shared user-content folder with deduplication (append _1, _2, etc.).
  * Returns relative path: "user-content/filename.ext"
  */
-async function copyToUserContent(
-  projectPath: string,
-  sourcePath: string
-): Promise<string> {
+async function copyToUserContent(sourcePath: string): Promise<string> {
   const contentDir = getSharedUserContentPath();
   await mkdir(contentDir, { recursive: true });
 
@@ -398,7 +390,6 @@ async function saveAsset(
  */
 async function pickContent(
   _e: unknown,
-  projectPath: string,
   type: "image" | "video" | "audio"
 ): Promise<{ name: string; path: string } | null> {
   const filterMap: Record<string, string[]> = {
@@ -420,11 +411,11 @@ async function pickContent(
   const filePath = result.filePaths[0]!;
   const fileName = basename(filePath);
 
-  if (isFileInUserContentFolder(filePath, projectPath)) {
+  if (isFileInUserContentFolder(filePath)) {
     return { name: fileName, path: `user-content/${fileName}` };
   }
 
-  const relativePath = await copyToUserContent(projectPath, filePath);
+  const relativePath = await copyToUserContent(filePath);
   return { name: fileName, path: relativePath };
 }
 
@@ -434,13 +425,12 @@ async function pickContent(
  */
 async function copyExternalFile(
   _e: unknown,
-  projectPath: string,
   externalFilePath: string
 ): Promise<string> {
-  if (isFileInUserContentFolder(externalFilePath, projectPath)) {
+  if (isFileInUserContentFolder(externalFilePath)) {
     return `user-content/${basename(externalFilePath)}`;
   }
-  return copyToUserContent(projectPath, externalFilePath);
+  return copyToUserContent(externalFilePath);
 }
 
 /**
@@ -739,8 +729,25 @@ app.whenReady().then(async () => {
     let absPath: string;
 
     if (!kprojMatch) {
-      // Fallback: treat entire decoded path as absolute
-      absPath = normalize(decoded);
+      // Fallback: no .kproj boundary found
+      // Check if path contains user-content/ or assets/ segment
+      const userContentIndex = decoded.indexOf("user-content/");
+      const assetsIndex = decoded.indexOf("assets/");
+
+      if (userContentIndex >= 0) {
+        // Extract relative path from user-content/ onwards
+        const relativePath = decoded.slice(userContentIndex);
+        absPath = normalize(join(getAppRoot(), relativePath));
+        console.log(`[${ASSET_SCHEME}] Fallback user-content: ${relativePath} → ${absPath}`);
+      } else if (assetsIndex >= 0) {
+        // Extract relative path from assets/ onwards
+        const relativePath = decoded.slice(assetsIndex);
+        absPath = normalize(join(getAppRoot(), relativePath));
+        console.log(`[${ASSET_SCHEME}] Fallback assets: ${relativePath} → ${absPath}`);
+      } else {
+        // No known prefix → treat as absolute path
+        absPath = normalize(decoded);
+      }
     } else {
       const projectDir = kprojMatch[1];
       const relativePath = kprojMatch[2];
@@ -849,6 +856,7 @@ app.whenReady().then(async () => {
     const { width, height } = screen.getPrimaryDisplay().size;
     return { width, height };
   });
+  ipcMain.handle("app:root", () => getAppRoot());
   ipcMain.handle("kiosk:info", () => ({ kiosk: IS_KIOSK, projectPath: KIOSK_PROJECT }));
   ipcMain.handle("analytics:write", async (_e, path: string, data: string, appendMode: boolean) => {
     try {
