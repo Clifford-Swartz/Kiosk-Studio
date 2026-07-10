@@ -110,6 +110,17 @@ function rewritePathsForExport(projectObj: Record<string, unknown>): void {
       const props = el.props as Record<string, unknown>;
       if (props.src) props.src = rewritePath(props.src);
       if (props.background) props.background = rewritePath(props.background);
+
+      // Collection items: rewrite image + thumbnail paths
+      if (Array.isArray(props.items)) {
+        for (const item of props.items) {
+          if (item && typeof item === "object") {
+            const i = item as Record<string, unknown>;
+            if (i.image) i.image = rewritePath(i.image);
+            if (i.thumbnail) i.thumbnail = rewritePath(i.thumbnail);
+          }
+        }
+      }
     }
     if (el.children && Array.isArray(el.children)) {
       el.children.forEach(processElement);
@@ -148,6 +159,17 @@ function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
       const props = el.props as Record<string, unknown>;
       if (props.src) extractPath(props.src);
       if (props.background) extractPath(props.background);
+
+      // Collection items: scan image + thumbnail fields
+      if (Array.isArray(props.items)) {
+        for (const item of props.items) {
+          if (item && typeof item === "object") {
+            const i = item as Record<string, unknown>;
+            if (i.image) extractPath(i.image);
+            if (i.thumbnail) extractPath(i.thumbnail);
+          }
+        }
+      }
     }
     if (el.children && Array.isArray(el.children)) {
       el.children.forEach(processElement);
