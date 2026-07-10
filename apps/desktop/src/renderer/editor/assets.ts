@@ -95,11 +95,12 @@ export async function importImageBlob(blob: Blob, suggestedName: string): Promis
 }
 
 /**
- * Import content (image, video, or audio) from the shared user-content folder or copy
- * from an external location. Returns the relative path to the file, or null if canceled.
+ * Import content (image, video, audio, or media for both image/video) from the shared
+ * user-content folder or copy from an external location. Returns the relative path to
+ * the file, or null if canceled.
  */
 export async function importContentFile(
-  type: "image" | "video" | "audio"
+  type: "image" | "video" | "audio" | "media"
 ): Promise<string | null> {
   const picked = await window.kiosk.pickContent(type);
   if (!picked) return null;

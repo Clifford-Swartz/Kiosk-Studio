@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Element } from "../model/types.js";
 import { CollectionRenderer } from "./collections/CollectionRenderer.js";
 import { eventBus } from "../events/EventBus.js";
+import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
 
 export interface ElementRendererProps {
   element: Element;
@@ -66,8 +67,10 @@ export function resolveSrc(src: string, base?: string): string {
  * Renders a single scene element as an absolutely-positioned DOM node using
  * CSS transforms. This is the shared rendering primitive used by both the
  * Player and (later) the Editor canvas.
+ *
+ * Memoized to prevent unnecessary re-renders when parent updates but element props unchanged.
  */
-export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode }: ElementRendererProps) {
+export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
@@ -158,16 +161,22 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
         </TextElement>
       );
 
-    case "image":
+    case "image": {
+      const imageSrc = resolveSrc(str(props.src, ""), assetBaseUrl);
+      const isReady = imageLoadQueue.useImageReady(imageSrc, zIndex ?? 0);
+
       return (
         <img
           data-element-id={element.id}
-          src={resolveSrc(str(props.src, ""), assetBaseUrl)}
+          src={isReady ? imageSrc : PLACEHOLDER_FALLBACK}
           alt={str(props.alt, "")}
           draggable={false}
+          decoding="async"
+          loading="lazy"
           style={{
             ...baseStyle,
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+            transition: isReady ? "opacity 0.2s ease-in" : "none",
           }}
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
@@ -182,6 +191,7 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
           }}
         />
       );
+    }
 
     case "video":
       return (
@@ -211,6 +221,7 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
       const imageSrc = resolveSrc(str(props.imageSrc, ""), assetBaseUrl);
       const imageFit = str(props.imageFit, "cover") as React.CSSProperties["objectFit"];
       const radius = num(props.radius, 12);
+      const isButtonImageReady = imageLoadQueue.useImageReady(imageSrc, zIndex ?? 0);
 
       return (
         <>
@@ -235,9 +246,11 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
             {/* Image fill background */}
             {fillType === "image" && (
               <img
-                src={imageSrc}
+                src={isButtonImageReady ? imageSrc : PLACEHOLDER_FALLBACK}
                 alt=""
                 draggable={false}
+                decoding="async"
+                loading="lazy"
                 style={{
                   position: "absolute",
                   inset: 0,
@@ -246,6 +259,7 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
                   objectFit: imageFit,
                   pointerEvents: "none",
                   zIndex: 0,
+                  transition: isButtonImageReady ? "opacity 0.2s ease-in" : "none",
                 }}
                 onError={(e) => {
                   const target = e.currentTarget;
@@ -360,7 +374,19 @@ export function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBase
     default:
       return null;
   }
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if element or key props actually changed
+  // This prevents cascading re-renders when parent state updates but element unchanged
+  return (
+    prevProps.element === nextProps.element &&
+    prevProps.playing === nextProps.playing &&
+    prevProps.assetBaseUrl === nextProps.assetBaseUrl &&
+    prevProps.editorMode === nextProps.editorMode &&
+    prevProps.onTap === nextProps.onTap &&
+    prevProps.onHover === nextProps.onHover &&
+    prevProps.onHoverEnd === nextProps.onHoverEnd
+  );
+});
 
 // --- audio element with fade-in/out ----------------------------------------
 

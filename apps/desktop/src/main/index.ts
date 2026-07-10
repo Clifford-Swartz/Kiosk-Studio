@@ -390,12 +390,13 @@ async function saveAsset(
  */
 async function pickContent(
   _e: unknown,
-  type: "image" | "video" | "audio"
+  type: "image" | "video" | "audio" | "media"
 ): Promise<{ name: string; path: string } | null> {
   const filterMap: Record<string, string[]> = {
     image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
     video: ["mp4", "webm"],
     audio: ["mp3", "wav", "ogg"],
+    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm"],
   };
 
   const contentDir = getSharedUserContentPath();

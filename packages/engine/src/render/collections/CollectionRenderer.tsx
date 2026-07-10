@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { resolveSrc } from "../ElementRenderer.js";
+import { imageLoadQueue } from "../../runtime/ImageLoadQueue.js";
 
 /**
  * Renders a "collection" element: a set of templated items laid out in a chosen
@@ -191,6 +192,7 @@ function ItemCard({
   videoRef,
   isActive,
   objectFit = "cover",
+  useThumbnail = false,
 }: {
   item: CollectionItem;
   props: Record<string, unknown>;
@@ -199,15 +201,24 @@ function ItemCard({
   videoRef?: (el: HTMLVideoElement | null) => void;
   isActive?: boolean;
   objectFit?: "cover" | "contain";
+  useThumbnail?: boolean;
 }) {
-  const src = resolveSrc(str(item.image), assetBaseUrl);
+  // Use thumbnail for inactive cards when available, full image/video only when active
+  const rawSrc = useThumbnail && !isActive ? (item.thumbnail || item.image) : item.image;
+  const src = resolveSrc(str(rawSrc), assetBaseUrl);
   const hasVideo = src && isVideo(src);
+
+  // Queue image loading (priority: active cards = 0, inactive = 1)
+  const imageReady = imageLoadQueue.useImageReady(src, isActive ? 0 : 1);
 
   // Switch preload based on active state
   useEffect(() => {
     if (!hasVideo) return;
     // Effect runs after render, so videoRef callback has already run
   }, [isActive, hasVideo]);
+
+  // Placeholder for loading images
+  const placeholderSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='240' viewBox='0 0 320 240'%3E%3Crect width='320' height='240' fill='%230b1016'/%3E%3C/svg%3E";
 
   return (
     <div
@@ -230,7 +241,20 @@ function ItemCard({
               style={{ width: "100%", height: "100%", objectFit, display: "block" }}
             />
           ) : (
-            <img src={src} alt={str(item.title)} style={{ width: "100%", height: "100%", objectFit, display: "block" }} draggable={false} />
+            <img
+              src={imageReady ? src : placeholderSvg}
+              alt={str(item.title)}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit,
+                display: "block",
+                transition: imageReady ? "opacity 0.2s ease-in" : "none"
+              }}
+              draggable={false}
+              decoding="async"
+              loading="lazy"
+            />
           )
         ) : (
           <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 14 }}>
@@ -292,11 +316,12 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
         {list.map((it, idx) => (
           <div key={it.id} onClick={() => playing && setActiveIndex(idx)} style={{ cursor: playing ? "pointer" : undefined }}>
             <ItemCard
-              item={{ ...it, image: it.thumbnail || it.image }} // Use thumbnail for grid view
+              item={it}
               props={props}
               assetBaseUrl={assetBaseUrl}
               videoRef={(el) => el && videoRefs.current.set(it.id, el)}
               isActive={idx === activeIndex}
+              useThumbnail={true}
             />
           </div>
         ))}
@@ -347,6 +372,8 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
                         objectFit: "contain",
                       }}
                       draggable={false}
+                      decoding="async"
+                      loading="lazy"
                     />
                   )
                 ) : (
@@ -420,13 +447,14 @@ function Carousel({ list, props, assetBaseUrl, width, videoRefs, activeIndex, se
                 style={{ width: "100%", height: "100%" }}
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
+                useThumbnail={true}
               />
             </div>
           );
         })}
       </div>
-      <NavButton side="left" onClick={() => setActiveIndex(idx - 1)} />
-      <NavButton side="right" onClick={() => setActiveIndex(idx + 1)} />
+      <NavButton side="left" onClick={() => setActiveIndex(idx - 1)} containerSize={cardW} />
+      <NavButton side="right" onClick={() => setActiveIndex(idx + 1)} containerSize={cardW} />
     </div>
   );
 }
@@ -479,13 +507,14 @@ function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeInde
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
                 objectFit="contain"
+                useThumbnail={true}
               />
             </div>
           );
         })}
       </div>
-      <NavButton side="up" onClick={() => setActiveIndex(idx - 1)} />
-      <NavButton side="down" onClick={() => setActiveIndex(idx + 1)} />
+      <NavButton side="up" onClick={() => setActiveIndex(idx - 1)} containerSize={cardH} />
+      <NavButton side="down" onClick={() => setActiveIndex(idx + 1)} containerSize={cardH} />
     </div>
   );
 }
@@ -530,13 +559,14 @@ function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, s
                 style={{ width: "100%", height: "100%" }}
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
+                useThumbnail={true}
               />
             </div>
           );
         })}
       </div>
-      <NavButton side="left" onClick={() => setActiveIndex(idx - 1)} />
-      <NavButton side="right" onClick={() => setActiveIndex(idx + 1)} />
+      <NavButton side="left" onClick={() => setActiveIndex(idx - 1)} containerSize={cardW} />
+      <NavButton side="right" onClick={() => setActiveIndex(idx + 1)} containerSize={cardW} />
     </div>
   );
 }
@@ -597,6 +627,8 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
                   src={src}
                   alt={str(it.title)}
                   draggable={false}
+                  decoding="async"
+                  loading="lazy"
                   style={{
                     width: "100%",
                     height: "100%",
@@ -630,10 +662,15 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
 
 // --- nav button ------------------------------------------------------------
 
-function NavButton({ side, onClick }: { side: "left" | "right" | "up" | "down"; onClick: () => void }) {
+function NavButton({ side, onClick, containerSize }: { side: "left" | "right" | "up" | "down"; onClick: () => void; containerSize: number }) {
   const isVertical = side === "up" || side === "down";
   const cssProp = side === "up" ? "top" : side === "down" ? "bottom" : side;
-  const offset = isVertical ? "15%" : 8;
+
+  // Scale button size based on container dimension (min 40px, max 100px, proportional to size)
+  const buttonSize = Math.max(40, Math.min(100, containerSize * 0.08));
+  const fontSize = buttonSize * 0.4;
+  const offset = isVertical ? "13%" : buttonSize * 0.15;
+
   const positionStyle = isVertical
     ? { [cssProp]: offset, left: "50%", transform: "translateX(-50%)" }
     : { [cssProp]: offset, top: "50%", transform: "translateY(-50%)" };
@@ -649,15 +686,15 @@ function NavButton({ side, onClick }: { side: "left" | "right" | "up" | "down"; 
       style={{
         position: "absolute",
         ...positionStyle,
-        width: 44,
-        height: 44,
+        width: buttonSize,
+        height: buttonSize,
         borderRadius: "50%",
         background: "rgba(15,23,42,0.7)",
         color: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 22,
+        fontSize,
         cursor: "pointer",
         userSelect: "none",
       }}

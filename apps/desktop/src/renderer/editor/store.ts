@@ -124,8 +124,8 @@ export interface EditorState {
   // --- scene ops ---
   addScene: () => void;
   renameScene: (id: string, name: string) => void;
-  /** Update active scene properties (background, backgroundSize, backgroundPosition, transition — canvas size is project-wide). */
-  updateActiveScene: (patch: Partial<Pick<Scene, "background" | "backgroundSize" | "backgroundPosition" | "transition">>) => void;
+  /** Update active scene properties (background, backgroundSize, backgroundPosition, transition, states — canvas size is project-wide). */
+  updateActiveScene: (patch: Partial<Pick<Scene, "background" | "backgroundSize" | "backgroundPosition" | "transition" | "states">>) => void;
   /** Update the project-wide canvas size (applies to all scenes). */
   updateProjectSize: (size: { width?: number; height?: number }) => void;
   removeScene: (id: string) => void;

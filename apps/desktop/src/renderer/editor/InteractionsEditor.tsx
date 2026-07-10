@@ -122,6 +122,8 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                       : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
                       : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
                       : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
+                      : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
+                      : t === "setState" ? { stateName: "default", animated: false, duration: 300 }
                       : { target: otherElements[0]?.id ?? elementId };
                     addAction(elementId, it.id, { type: t, params: defaults });
                   }}
@@ -131,6 +133,8 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                   <option value="goToScene">Go to scene</option>
                   <option value="setProp">Set property</option>
                   <option value="toggle">Toggle visibility</option>
+                  <option value="animate">Animate property</option>
+                  <option value="setState">Change scene state</option>
                   <option value="togglePlayPause">Toggle play/pause</option>
                   <option value="seekVideo">Seek video to time</option>
                   <option value="setVolume">Set volume</option>
@@ -187,6 +191,8 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                       : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
                       : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
                       : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
+                      : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
+                      : t === "setState" ? { stateName: "default", animated: false, duration: 300 }
                       : { target: otherElements[0]?.id ?? elementId };
                     addAction(elementId, enter.id, { type: t, params: defaults });
                   }}
@@ -196,6 +202,8 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                   <option value="goToScene">Go to scene</option>
                   <option value="setProp">Set property</option>
                   <option value="toggle">Toggle visibility</option>
+                  <option value="animate">Animate property</option>
+                  <option value="setState">Change scene state</option>
                   <option value="togglePlayPause">Toggle play/pause</option>
                   <option value="seekVideo">Seek video to time</option>
                   <option value="setVolume">Set volume</option>
@@ -398,6 +406,8 @@ function ActionRow({
     goToScene: "Go to scene",
     setProp: "Set property",
     toggle: "Toggle visibility",
+    animate: "Animate property",
+    setState: "Change scene state",
     togglePlayPause: "Toggle play/pause",
     seekVideo: "Seek video",
     setVolume: "Set volume",
@@ -565,6 +575,180 @@ function ActionRow({
           </select>
         </>
       )}
+
+      {action.type === "animate" && (() => {
+        const targetEl = targets.find((t) => t.id === str(p.target));
+        const property = str(p.property);
+
+        const captureFrom = () => {
+          if (!targetEl) return;
+          let capturedValue: any;
+
+          if (property === "position") {
+            capturedValue = { x: targetEl.x, y: targetEl.y };
+          } else if (property === "scale") {
+            capturedValue = { width: targetEl.width, height: targetEl.height };
+          } else if (property === "opacity") {
+            capturedValue = targetEl.opacity ?? 1;
+          } else if (property === "rotation") {
+            capturedValue = targetEl.rotation ?? 0;
+          }
+
+          // Batch update using onChange instead of setParam to avoid race conditions
+          onChange({ params: { ...p, from: capturedValue } });
+        };
+
+        const captureTo = () => {
+          if (!targetEl) return;
+          let capturedValue: any;
+
+          if (property === "position") {
+            capturedValue = { x: targetEl.x, y: targetEl.y };
+          } else if (property === "scale") {
+            capturedValue = { width: targetEl.width, height: targetEl.height };
+          } else if (property === "opacity") {
+            capturedValue = targetEl.opacity ?? 1;
+          } else if (property === "rotation") {
+            capturedValue = targetEl.rotation ?? 0;
+          }
+
+          // Batch update using onChange instead of setParam to avoid race conditions
+          onChange({ params: { ...p, to: capturedValue } });
+        };
+
+        return (
+          <>
+            <select value={str(p.target)} onChange={(e) => setParam("target", e.target.value)} style={input}>
+              <option value="">— choose element —</option>
+              {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
+            </select>
+            <select value={property || "opacity"} onChange={(e) => setParam("property", e.target.value)} style={{ ...input, marginTop: 4 }}>
+              <option value="opacity">Opacity</option>
+              <option value="position">Position (x, y)</option>
+              <option value="scale">Scale (width, height)</option>
+              <option value="rotation">Rotation</option>
+            </select>
+
+            {/* From inputs (optional, per property type) */}
+            <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 6, marginBottom: 2 }}>From (optional)</div>
+            {property === "position" && (
+              <>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="number" placeholder="X" value={typeof p.from?.x === "number" ? p.from.x : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Y" value={typeof p.from?.y === "number" ? p.from.y : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                </div>
+                {targetEl && (
+                  <button onClick={captureFrom} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current position
+                  </button>
+                )}
+              </>
+            )}
+            {property === "scale" && (
+              <>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="number" placeholder="Width" value={typeof p.from?.width === "number" ? p.from.width : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Height" value={typeof p.from?.height === "number" ? p.from.height : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                </div>
+                {targetEl && (
+                  <button onClick={captureFrom} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current scale
+                  </button>
+                )}
+              </>
+            )}
+            {(property === "opacity" || property === "rotation") && (
+              <>
+                <input type="number" placeholder={property === "opacity" ? "0-1" : "degrees"} value={typeof p.from === "number" ? p.from : ""} onChange={(e) => setParam("from", Number(e.target.value))} style={input} />
+                {targetEl && (
+                  <button onClick={captureFrom} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current {property}
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* To inputs (required, per property type) */}
+            <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8, marginBottom: 2 }}>To (required)</div>
+            {property === "position" && (
+              <>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="number" placeholder="X" value={typeof p.to?.x === "number" ? p.to.x : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Y" value={typeof p.to?.y === "number" ? p.to.y : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                </div>
+                {targetEl && (
+                  <button onClick={captureTo} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current position
+                  </button>
+                )}
+              </>
+            )}
+            {property === "scale" && (
+              <>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="number" placeholder="Width" value={typeof p.to?.width === "number" ? p.to.width : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Height" value={typeof p.to?.height === "number" ? p.to.height : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                </div>
+                {targetEl && (
+                  <button onClick={captureTo} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current scale
+                  </button>
+                )}
+              </>
+            )}
+            {(property === "opacity" || property === "rotation") && (
+              <>
+                <input type="number" placeholder={property === "opacity" ? "0-1" : "degrees"} value={typeof p.to === "number" ? p.to : ""} onChange={(e) => setParam("to", Number(e.target.value))} style={input} />
+                {targetEl && (
+                  <button onClick={captureTo} style={{ ...captureBtn, marginTop: 4 }}>
+                    📍 Capture current {property}
+                  </button>
+                )}
+              </>
+            )}
+
+            <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+              <input type="number" placeholder="Duration (ms)" value={typeof p.duration === "number" ? p.duration : ""} onChange={(e) => setParam("duration", Number(e.target.value))} style={{ ...input, flex: 1 }} />
+              <select value={str(p.easing) || "linear"} onChange={(e) => setParam("easing", e.target.value)} style={{ ...input, flex: 1 }}>
+                <option value="linear">Linear</option>
+                <option value="easeIn">Ease In</option>
+                <option value="easeOut">Ease Out</option>
+                <option value="easeInOut">Ease In Out</option>
+              </select>
+            </div>
+            <input type="number" placeholder="Delay (ms, optional)" value={typeof p.delay === "number" ? p.delay : ""} onChange={(e) => setParam("delay", Number(e.target.value) || 0)} style={{ ...input, marginTop: 4 }} />
+          </>
+        );
+      })()}
+
+      {action.type === "setState" && (() => {
+        const scene = useEditor.getState().activeScene();
+        const states = scene.states ?? {};
+        const stateNames = ["default", ...Object.keys(states)];
+
+        return (
+          <>
+            <select
+              value={str(p.stateName) || "default"}
+              onChange={(e) => setParam("stateName", e.target.value)}
+              style={input}
+            >
+              {stateNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <input type="checkbox" checked={!!p.animated} onChange={(e) => setParam("animated", e.target.checked)} />
+              <span style={{ fontSize: 12, color: "#e2e8f0" }}>Animated transition</span>
+            </div>
+            {p.animated && (
+              <input type="number" placeholder="Duration (ms)" value={typeof p.duration === "number" ? p.duration : 300} onChange={(e) => setParam("duration", Number(e.target.value))} style={{ ...input, marginTop: 4 }} />
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -645,4 +829,14 @@ const sectionLabel: CSSProperties = {
   textTransform: "uppercase",
   letterSpacing: 0.5,
   marginBottom: 6,
+};
+const captureBtn: CSSProperties = {
+  width: "100%",
+  padding: "4px 8px",
+  background: "#1a2332",
+  border: "1px solid #2563eb",
+  borderRadius: 4,
+  color: "#93c5fd",
+  fontSize: 11,
+  cursor: "pointer",
 };

@@ -1,5 +1,9 @@
 import type { Action, Interaction, Project, Element } from "../model/types.js";
 import { eventBus } from "../events/EventBus.js";
+import type { AnimationRuntime } from "./AnimationRuntime.js";
+import type { AnimatableProperty, AnimatableValue } from "./PropertyRegistry.js";
+import type { StateRuntime } from "./StateRuntime.js";
+import type { EasingCurve } from "./easings.js";
 
 /**
  * Context handed to actions when an interaction runs. Carries scene navigation
@@ -16,11 +20,31 @@ export interface PlayerContext {
   seekVideo: (elementId: string, time: number) => void;
   setVolume: (elementId: string, volume: number) => void;
   setSpeed: (elementId: string, rate: number) => void;
+  animate: (
+    elementId: string,
+    property: AnimatableProperty,
+    from: AnimatableValue | undefined,
+    to: AnimatableValue,
+    duration: number,
+    easing?: EasingCurve,
+    delay?: number
+  ) => Promise<void>;
+  setState: (stateName: string, animated?: boolean, duration?: number) => Promise<void>;
   project: Project;
 }
 
-/** Execute every action in an interaction, in order. */
-export function runInteraction(interaction: Interaction, ctx: PlayerContext, element?: Element): void {
+/**
+ * Execute every action in an interaction, in order.
+ * Now async to support blocking animations in interaction sequences.
+ */
+export async function runInteraction(interaction: Interaction, ctx: PlayerContext, element?: Element): Promise<void> {
+  console.log(`[DEBUG-anim] runInteraction() called:`, {
+    trigger: interaction.trigger,
+    actionsCount: interaction.actions.length,
+    elementId: element?.id,
+    elementType: element?.type,
+  });
+
   // Emit element event for trigger
   if (element) {
     switch (interaction.trigger) {
@@ -51,12 +75,18 @@ export function runInteraction(interaction: Interaction, ctx: PlayerContext, ele
     }
   }
 
-  for (const action of interaction.actions) {
-    runAction(action, ctx, element);
+  for (let i = 0; i < interaction.actions.length; i++) {
+    const action = interaction.actions[i];
+    console.log(`[DEBUG-anim] Running action ${i + 1}/${interaction.actions.length}:`, {
+      type: action.type,
+      params: action.params,
+    });
+    await runAction(action, ctx, element);
+    console.log(`[DEBUG-anim] Action ${i + 1}/${interaction.actions.length} completed`);
   }
 }
 
-function runAction(action: Action, ctx: PlayerContext, element?: Element): void {
+async function runAction(action: Action, ctx: PlayerContext, element?: Element): Promise<void> {
   // Emit actionRun event
   eventBus.emit({
     kind: "actionRun",
@@ -160,9 +190,52 @@ function runAction(action: Action, ctx: PlayerContext, element?: Element): void 
       return;
     }
 
+    case "animate": {
+      const { target, property, from, to, duration, easing, delay } = action.params;
+      console.log(`[DEBUG-anim] runAction('animate') called with params:`, {
+        target,
+        property,
+        from,
+        to,
+        duration,
+        easing,
+        delay,
+      });
+      if (typeof target !== "string" || typeof property !== "string" || !to || typeof duration !== "number") {
+        console.error(`[DEBUG-anim] runAction('animate') validation failed - missing required params`);
+        warn("animate needs params.target (string), params.property (string), params.to, params.duration (number)");
+        return;
+      }
+      console.log(`[DEBUG-anim] runAction('animate') calling ctx.animate()...`);
+      await ctx.animate(
+        target,
+        property as AnimatableProperty,
+        from as AnimatableValue | undefined,
+        to as AnimatableValue,
+        duration,
+        (easing as EasingCurve) ?? "linear",
+        (delay as number) ?? 0
+      );
+      console.log(`[DEBUG-anim] runAction('animate') ctx.animate() completed`);
+      return;
+    }
+
+    case "setState": {
+      const { stateName, animated, duration } = action.params;
+      if (typeof stateName !== "string") {
+        warn("setState needs params.stateName (string)");
+        return;
+      }
+      await ctx.setState(
+        stateName,
+        (animated as boolean) ?? false,
+        (duration as number) ?? 300
+      );
+      return;
+    }
+
     // Implemented in later milestones.
     case "sendData":
-    case "animate":
       warn(`action '${action.type}' is not implemented yet`);
       return;
 

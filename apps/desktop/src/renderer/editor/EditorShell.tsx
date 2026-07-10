@@ -1,5 +1,7 @@
+import React from "react";
 import { Canvas } from "./Canvas.js";
 import { PropertiesPanel } from "./PropertiesPanel.js";
+import { StatesPanel } from "./StatesPanel.js";
 import { SidebarTabs } from "./SidebarTabs.js";
 import { TopBar } from "./TopBar.js";
 import { useUndoRedo } from "./useUndoRedo.js";
@@ -7,9 +9,69 @@ import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.js";
 import { useEditor } from "./store.js";
 
 /**
+ * Right toolbar: Properties + States tabs.
+ */
+function RightToolbar() {
+  const [activeTab, setActiveTab] = React.useState<"properties" | "states">("properties");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", width: 260, flexShrink: 0, background: "#0e1218", borderLeft: "1px solid #1f2733" }}>
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 2, background: "#0b1016", borderBottom: "1px solid #1f2733", padding: "0 8px" }}>
+        <button
+          style={{
+            flex: 1,
+            padding: "8px 16px",
+            background: activeTab === "properties" ? "#0e1218" : "#161c26",
+            border: "1px solid #1f2733",
+            borderBottom: "none",
+            borderTopLeftRadius: 6,
+            borderTopRightRadius: 6,
+            color: activeTab === "properties" ? "#e2e8f0" : "#94a3b8",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            position: "relative",
+            top: 1,
+          }}
+          onClick={() => setActiveTab("properties")}
+        >
+          Properties
+        </button>
+        <button
+          style={{
+            flex: 1,
+            padding: "8px 16px",
+            background: activeTab === "states" ? "#0e1218" : "#161c26",
+            border: "1px solid #1f2733",
+            borderBottom: "none",
+            borderTopLeftRadius: 6,
+            borderTopRightRadius: 6,
+            color: activeTab === "states" ? "#e2e8f0" : "#94a3b8",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            position: "relative",
+            top: 1,
+          }}
+          onClick={() => setActiveTab("states")}
+        >
+          States
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {activeTab === "properties" ? <PropertiesPanel /> : <StatesPanel />}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Composer-style editor layout:
  *   ┌───────────── TopBar (scenes, save, ▶ Play) ─────────────┐
- *   │ Palette │            Canvas               │ Properties   │
+ *   │ Palette │            Canvas               │ Prop/States  │
  *   │         │                                 │              │
  *   │ Scene   │                                 │              │
  *   │ Struct. │                                 │              │
@@ -151,7 +213,7 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <SidebarTabs />
         <Canvas pauseCapture={pauseCapture} resumeCapture={resumeCapture} />
-        <PropertiesPanel />
+        <RightToolbar />
       </div>
     </div>
   );

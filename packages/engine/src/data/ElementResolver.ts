@@ -1,5 +1,23 @@
 import { useSyncExternalStore } from "react";
 import type { Binding, Element } from "../model/types.js";
+import { ANIMATABLE_PROPS } from "../runtime/PropertyRegistry.js";
+import { VisibilityManager } from "../runtime/VisibilityManager.js";
+
+/**
+ * External state provider (StateRuntime).
+ */
+export interface StateProvider {
+  applyState(element: Element): Partial<Element>;
+  setNotifyChange?(callback: (() => void) | null): void;
+}
+
+/**
+ * External animation provider (AnimationRuntime).
+ */
+export interface AnimationProvider {
+  getOverrides(): Map<string, Partial<Element>>;
+  setNotifyChange?(callback: (() => void) | null): void;
+}
 
 /**
  * React-facing interface: subscribe to element changes (bindings + overrides)
@@ -11,6 +29,16 @@ export interface ElementResolver {
    * component top-level. Returns a stable resolver function.
    */
   useResolveElement(): (element: Element) => Element;
+
+  /**
+   * Set external state provider (called by Player when StateRuntime instantiated).
+   */
+  setStateProvider(provider: StateProvider | null): void;
+
+  /**
+   * Set external animation provider (called by Player when AnimationRuntime instantiated).
+   */
+  setAnimationProvider(provider: AnimationProvider | null): void;
 }
 
 /**
@@ -44,6 +72,13 @@ export interface OverrideHost {
 /**
  * Unified element resolver: combines binding resolution + override application
  * into a single pipeline with one cache. Consolidates BindingContext + OverrideStore.
+ *
+ * Rendering pipeline order (ADR 0010, ADR 0011):
+ * 1. Project schema (base)
+ * 2. Bindings (live data)
+ * 3. State overrides (scene states)
+ * 4. Interaction overrides (setProp)
+ * 5. Animations (tweens)
  */
 class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost {
   // Binding state
@@ -52,12 +87,16 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
   // Override state (ephemeral, runtime-only mutations)
   private overrides = new Map<string, Record<string, unknown>>();
 
+  // External providers (state + animation)
+  private stateProvider: StateProvider | null = null;
+  private animationProvider: AnimationProvider | null = null;
+
   // Shared subscription state
   private listeners = new Set<() => void>();
   private version = 0;
 
   // Unified cache: element.id -> { version, resolved }
-  // Caches the COMBINED result (bindings + overrides)
+  // Caches the COMBINED result (bindings + state + overrides + animations)
   private cache = new Map<string, { version: number; resolved: Element }>();
 
   // BindingHost methods
@@ -99,6 +138,39 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
     this.bump();
   }
 
+  // Provider setters
+  setStateProvider(provider: StateProvider | null): void {
+    // Clear old provider's callback
+    if (this.stateProvider?.setNotifyChange) {
+      this.stateProvider.setNotifyChange(null);
+    }
+
+    this.stateProvider = provider;
+
+    // Wire new provider to bump on changes
+    if (provider?.setNotifyChange) {
+      provider.setNotifyChange(() => this.bump());
+    }
+
+    this.bump();
+  }
+
+  setAnimationProvider(provider: AnimationProvider | null): void {
+    // Clear old provider's callback
+    if (this.animationProvider?.setNotifyChange) {
+      this.animationProvider.setNotifyChange(null);
+    }
+
+    this.animationProvider = provider;
+
+    // Wire new provider to bump on changes
+    if (provider?.setNotifyChange) {
+      provider.setNotifyChange(() => this.bump());
+    }
+
+    this.bump();
+  }
+
   // Stable resolver bound to this instance (doesn't recreate)
   private resolveElement = (element: Element): Element => {
     // Check cache first
@@ -107,11 +179,26 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
       return cached.resolved;
     }
 
-    // Resolve bindings first
-    let resolved = this.resolveBindings(element);
+    // Pipeline: schema → bindings → state → interaction overrides → animations
+    let resolved = element; // 1. Schema (base)
 
-    // Apply overrides on top
-    resolved = this.applyOverrides(resolved, element.id);
+    resolved = this.resolveBindings(resolved); // 2. Bindings
+
+    if (this.stateProvider) {
+      // 3. State overrides
+      const stateOverrides = this.stateProvider.applyState(resolved);
+      resolved = { ...resolved, ...stateOverrides };
+    }
+
+    resolved = this.applyOverrides(resolved, element.id); // 4. Interaction overrides
+
+    if (this.animationProvider) {
+      // 5. Animations (final layer)
+      const animOverrides = this.animationProvider.getOverrides().get(element.id);
+      if (animOverrides) {
+        resolved = { ...resolved, ...animOverrides };
+      }
+    }
 
     // Cache combined result
     this.cache.set(element.id, { version: this.version, resolved });
@@ -176,16 +263,32 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
     let propsCloned = false;
 
     for (const [key, value] of Object.entries(overrides)) {
-      // Special key: __hidden forces opacity to 0
+      // Special key: __hidden forces opacity to 0 (deprecated, use visible in state overrides)
       if (key === "__hidden") {
-        if (value) next = { ...next, opacity: 0 };
+        next = {
+          ...next,
+          opacity: VisibilityManager.hiddenToOpacity(
+            value as boolean,
+            next.opacity ?? 1
+          ),
+        };
         continue;
       }
-      if (!propsCloned) {
-        next = { ...next, props: { ...next.props } };
-        propsCloned = true;
+
+      // Geometry properties (x, y, width, height, opacity, rotation, zIndex) write to element root
+      if (GEOMETRY.has(key)) {
+        const n = Number(value);
+        if (Number.isFinite(n)) {
+          next = { ...next, [key]: n };
+        }
+      } else {
+        // Non-geometry properties write to element.props
+        if (!propsCloned) {
+          next = { ...next, props: { ...next.props } };
+          propsCloned = true;
+        }
+        next.props[key] = value;
       }
-      next.props[key] = value;
     }
 
     return next;
@@ -213,7 +316,10 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
 }
 
 // Helper functions (from original BindingContext)
-const GEOMETRY = new Set(["x", "y", "width", "height", "opacity", "rotation", "zIndex"]);
+const GEOMETRY = new Set([
+  ...ANIMATABLE_PROPS.flatMap((p) => p.fields),
+  "zIndex", // Not animatable but still geometry
+]);
 
 function walk(value: unknown, path?: string): unknown {
   if (!path) return value;

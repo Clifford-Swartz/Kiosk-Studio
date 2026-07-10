@@ -966,7 +966,7 @@ function CollectionFields({
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
-                const rel = await importContentFile("video");
+                const rel = await importContentFile("media");
                 if (rel) patchItem(it.id, { image: rel });
               }}
               title="Choose focused image or video"

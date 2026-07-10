@@ -45,6 +45,7 @@ export const ActionTypeSchema = z.enum([
   "playMedia",
   "sendData",
   "animate",
+  "setState",
   "togglePlayPause",
   "seekVideo",
   "setVolume",
@@ -300,6 +301,17 @@ export const ElementSchema: z.ZodType<ElementShape, z.ZodTypeDef, ElementInput> 
 // Scene, data sources, project
 // ---------------------------------------------------------------------------
 
+/** Element overrides for a scene state */
+export const StateElementOverrideSchema = z.object({
+  visible: z.boolean().optional(),
+  props: z.record(z.unknown()).optional(),
+});
+
+/** Named scene state (visibility + property overrides per element) */
+export const SceneStateSchema = z.object({
+  elements: z.record(StateElementOverrideSchema).default({}),
+});
+
 export const SceneSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -312,6 +324,11 @@ export const SceneSchema = z.object({
   backgroundPosition: z.string().optional(),
   transition: TransitionSchema.optional(),
   elements: z.array(ElementSchema).default([]),
+  /** Named scene states (visibility + property overrides). See ADR 0011. */
+  states: z.record(SceneStateSchema).refine(
+    (states) => !states || !("default" in states),
+    { message: "State name 'default' is reserved" }
+  ).optional(),
 });
 
 export const ProjectSchema = z.object({

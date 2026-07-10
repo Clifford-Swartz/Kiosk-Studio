@@ -66,10 +66,60 @@ A trigger (tap, hover, press, enterScene, dataChanged) paired with a sequence of
 - Navigate: `goToScene`, `goBack`
 - Mutate props: `setProp`, `toggle`
 - Control media: `playMedia`, `togglePlayPause`, `seekVideo`, `setVolume`, `setSpeed`
+- Animate: `animate` — smooth property tweens (opacity, position, scale, rotation). See ADR 0010.
+- Change state: `setState` — apply named scene state (visibility + prop overrides). See ADR 0011.
 - Send data: `sendData` (reserved)
-- Animate: `animate` (reserved)
 
-Actions write to an **override store** (ephemeral, runtime-only mutations). Overrides apply on top of bindings and reset on scene change.
+Actions write to an **override store** (ephemeral, runtime-only mutations). Overrides apply on top of bindings and state overrides. Reset on scene change.
+
+### Scene State
+Named configuration snapshots within a scene that control element visibility and property overrides. Replaces multi-scene flows with single-scene state transitions.
+
+**Storage:** `Scene.states` field maps state name → element overrides. Each state defines which elements are visible and which props to override (text, fill, color, src, imageSrc).
+
+**Default state:** Every scene implicitly has "default" state — base element properties from schema, no overrides. Custom states apply on top of default. Scene loads with no active state → uses default.
+
+**setState action:** `setState(stateName, animated?, duration?)` switches active state. Instant or animated (fade out → swap props → fade in). State overrides apply in rendering pipeline after bindings, before interaction overrides (setProp).
+
+**Conflict resolution:** State overrides block bindings for same property. Interaction overrides (setProp) override state props. Animations override everything for animated property duration. See ADR 0011.
+
+**Use case:** Multi-step interactions in one scene. Example: Server rack with 8 blades, each with detail panel + demo content. One scene + 8 states instead of 40+ scenes.
+
+_Avoid:_ Flow, Step (old concepts, replaced by Scene State)
+
+### Animation
+Smooth property tweens triggered by interactions. Used for touch feedback, state transitions, data-driven motion.
+
+**Animatable properties (v1):** position (x/y), scale (width/height), opacity, rotation. Numeric values only. Duration + easing curve (linear, easeIn, easeOut, easeInOut) configurable.
+
+**Execution model:** 
+- **Interaction-triggered** (tap/hover → animate) — blocks subsequent actions until tween completes. Guarantees feedback timing.
+- **Passive-triggered** (enterScene/dataChanged → animate) — non-blocking, user can navigate away mid-tween.
+
+**Interruption:** New tween on same element+property blocked until current completes. Element visibility set to false → running animations cancelled.
+
+**Implementation:** AnimationRuntime manages requestAnimationFrame loop, applies as final layer in rendering pipeline (overrides bindings/states/interaction overrides for animated property). See ADR 0010.
+
+**animate action:** `animate(target, property, from?, to, duration, easing?, delay?)`. From parameter optional (defaults to current rendered value). Capture buttons in editor snapshot current canvas values.
+
+**Implementation lessons (2026-07):**
+
+**Issue 1: No visual tweening (instant snap to final position)**
+- **Root cause:** `AnimationRuntime.tick()` updated tween values each RAF frame but only called `updateOverrides()` (which triggers React re-render) when animation **completed**. React never saw interpolated values.
+- **Solution:** Call `updateOverrides()` on **every tick**, not just on completion. This invalidates ElementResolver cache and triggers React re-render with current animation values.
+- **File:** `packages/engine/src/runtime/AnimationRuntime.ts:tick()` — moved `this.updateOverrides()` call before completion callback loop.
+
+**Issue 2: Elements revert to original position after animation completes**
+- **Root cause:** Animations apply as ephemeral layer (ADR 0010). When tween completes, animation override clears. No mechanism persisted final value to lower layer → element reverted to schema base.
+- **Solution:** On animation completion, write final value to **interaction override store** (layer 4 in rendering pipeline) via `overrideHost.setOverride()`. Animation override (layer 5) clears, but interaction override persists until scene change.
+- **Files:** 
+  - `AnimationRuntime.ts:onComplete()` — calls `persistToOverrides()` callback with final value before clearing animation override
+  - `Player.tsx:useEffect()` — wires `setPersistToOverrides()` callback that writes to `overrideHost` (position→x/y, scale→width/height, opacity, rotation)
+  - `ElementResolver.ts:applyOverrides()` — fixed to write geometry properties (`x`, `y`, `width`, `height`, `opacity`, `rotation`, `zIndex`) to element root (`element[key]`), not `element.props[key]`. Non-geometry properties still write to props.
+
+**Key insight:** Interaction override system (`overrideHost.setOverride()`) handles both geometry and props, but needs to distinguish them. Geometry properties write to element root (like bindings do), non-geometry properties write to `element.props`.
+
+_Avoid:_ Tween, Transition (when referring to property animations — Transition is scene-level navigation effect)
 
 ### Transition
 
@@ -82,6 +132,8 @@ The visual effect that plays when entering a Scene. Attached to the destination 
 **Default behavior:** When a Scene has no transition field or `type: "none"`, scenes swap instantly (no animation). The first scene on project load never transitions — it appears immediately regardless of its transition configuration.
 
 **Not** an Action — Actions are trigger-driven behaviors on Elements. Transitions are presentation-level effects on Scenes. The timing is: goToScene called → transition animates (Player locked, further goToScene ignored) → transition completes → enterScene triggers fire on the new scene's elements.
+
+**Distinction from Animation:** Transitions = scene-to-scene navigation effects. Animations (animate action) = element property tweens within a scene.
 
 ### Data Connector
 Bidirectional bridge between kiosk and external systems. A connector can have **input** (data flows IN: REST poll, MQTT subscribe, serial read → emit `dataChanged` events), **output** (data flows OUT: subscribe to kiosk events, export to CSV/REST/console), or both.
@@ -126,13 +178,17 @@ Stack of scene IDs tracking the user's navigation path through the kiosk. Mainta
 ## Architecture Patterns
 
 ### Rendering Pipeline
-1. **Project** (immutable, persisted) → active Scene
-2. **EventBus** dispatches `dataChanged` events from connectors
-3. **Bindings** apply (live data) via `BindingContext` subscription
-4. **Overrides** apply (interaction mutations) via `applyOverrides()`
-5. **ElementRenderer** draws resolved element, emits media events to EventBus
+Element properties resolve through layered pipeline (each layer applies on top):
 
-All kiosk events flow through EventBus: Player emits navigation (`sceneEnter`/`sceneExit`), interactions.ts emits user actions (`elementTap`), ElementRenderer emits media events (`videoPlay`). Consumers subscribe: BindingContext for data binding, AnalyticsStore for export.
+1. **Project schema** — Base element properties (immutable, persisted)
+2. **Bindings** — Live data updates via BindingContext (subscribes to EventBus `dataChanged`)
+3. **State overrides** — Active scene state (visibility + props from `setState` action)
+4. **Interaction overrides** — Ephemeral mutations from `setProp`/`toggle` actions (OverrideStore)
+5. **Animations** — Property tweens in progress (AnimationRuntime, final layer)
+
+**Conflict resolution:** Later layers override earlier layers for same property. State overrides block bindings. Animations override everything for animated property. See ADR 0010, ADR 0011.
+
+**Event flow:** All kiosk events flow through EventBus. Player emits navigation (`sceneEnter`/`sceneExit`), interactions.ts emits user actions (`elementTap`), ElementRenderer emits media events (`videoPlay`). Consumers subscribe: BindingContext for data binding, StateRuntime for state tracking, AnalyticsStore for export.
 
 ### Editor vs. Player
 - **Editor** (`apps/desktop`): Zustand store for project mutations, undo/redo, Canvas with drag/snap

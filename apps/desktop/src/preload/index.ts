@@ -44,7 +44,7 @@ const api = {
    * user-content folder. Automatically copies external files into user-content.
    * Resolves to { name, path } (relative path) or null if canceled.
    */
-  pickContent: (type: "image" | "video" | "audio"): Promise<{ name: string; path: string } | null> =>
+  pickContent: (type: "image" | "video" | "audio" | "media"): Promise<{ name: string; path: string } | null> =>
     ipcRenderer.invoke("content:pick", type),
   /**
    * Copy an external file to the shared user-content folder, preserving its
