@@ -31,6 +31,23 @@ function useDebouncedCallback<T extends (...args: any[]) => void>(
 }
 
 /**
+ * Web-safe fonts available on both Windows and macOS without bundling any
+ * font files — matches what `TextElement` in the engine can actually render.
+ */
+const FONT_OPTIONS: { label: string; value: string }[] = [
+  { label: "System Default", value: "system-ui, sans-serif" },
+  { label: "Arial", value: "Arial, Helvetica, sans-serif" },
+  { label: "Helvetica", value: "Helvetica, Arial, sans-serif" },
+  { label: "Verdana", value: "Verdana, sans-serif" },
+  { label: "Trebuchet MS", value: "'Trebuchet MS', sans-serif" },
+  { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
+  { label: "Georgia", value: "Georgia, serif" },
+  { label: "Courier New", value: "'Courier New', Courier, monospace" },
+  { label: "Impact", value: "Impact, sans-serif" },
+  { label: "Comic Sans MS", value: "'Comic Sans MS', sans-serif" },
+];
+
+/**
  * Right panel: edit the selected element. Geometry (x/y/w/h/rotation/opacity)
  * plus a type-specific section. Two-way bound to the store, so canvas and layer
  * tree update live as you type.
@@ -201,6 +218,48 @@ function TypeFields({
           </Row>
           <BindControl elementId={el.id} targetProp="text" />
           <Row label="Size"><Num value={n(p.fontSize, 32)} onChange={(v) => debouncedSet("fontSize", Number(v))} /></Row>
+          <Row label="Font">
+            <select
+              value={str(p.fontFamily, "system-ui, sans-serif")}
+              onChange={(e) => set("fontFamily", e.target.value)}
+              style={{ ...input, fontFamily: str(p.fontFamily, "system-ui, sans-serif") }}
+            >
+              {FONT_OPTIONS.map((f) => (
+                <option key={f.value} value={f.value} style={{ fontFamily: f.value }}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Style">
+            <div style={{ display: "flex", gap: 4 }}>
+              {([
+                { key: "bold", label: "B", active: str(p.fontWeight, "normal") === "bold", weight: 700 as const },
+                { key: "italic", label: "I", active: str(p.fontStyle, "normal") === "italic", weight: 400 as const },
+              ] as const).map((btn) => (
+                <button
+                  key={btn.key}
+                  onClick={() =>
+                    btn.key === "bold"
+                      ? set("fontWeight", btn.active ? "normal" : "bold")
+                      : set("fontStyle", btn.active ? "normal" : "italic")
+                  }
+                  style={{
+                    ...input,
+                    flex: 1,
+                    cursor: "pointer",
+                    fontWeight: btn.weight,
+                    fontStyle: btn.key === "italic" ? "italic" : "normal",
+                    background: btn.active ? "#2563eb" : "#161c26",
+                    color: btn.active ? "#fff" : "#e2e8f0",
+                    border: btn.active ? "1px solid #1d4ed8" : "1px solid #232c3a",
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </Row>
           <Row label="Color"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
           <Row label="Align">
             <div style={{ display: "flex", gap: 4 }}>
@@ -433,6 +492,14 @@ function TypeFields({
               type="checkbox"
               checked={bool(p.muted, true)}
               onChange={(e) => set("muted", e.target.checked)}
+            />
+          </Row>
+
+          <Row label="Show controls">
+            <input
+              type="checkbox"
+              checked={bool(p.showControls, false)}
+              onChange={(e) => set("showControls", e.target.checked)}
             />
           </Row>
 
@@ -901,6 +968,13 @@ function CollectionFields({
           <option value="kenburns">Ken Burns</option>
         </select>
       </Row>
+      <Row label="Fit">
+        <select value={str(p.fit, "cover")} onChange={(e) => set("fit", e.target.value)} style={input}>
+          <option value="cover">Cover</option>
+          <option value="contain">Contain</option>
+          <option value="fill">Fill</option>
+        </select>
+      </Row>
       {layout === "grid" && (
         <Row label="Columns"><Num value={n(p.columns, 3)} onChange={(v) => set("columns", Number(v))} /></Row>
       )}
@@ -910,11 +984,30 @@ function CollectionFields({
       {layout === "kenburns" && (
         <Row label="Interval (ms)"><Num value={n(p.intervalMs, 4000)} onChange={(v) => set("intervalMs", Number(v))} /></Row>
       )}
-      <Row label="Item bg"><Color value={str(p.itemBg, "#1e293b")} onChange={(v) => set("itemBg", v)} /></Row>
+      <Row label="Item bg">
+        <span style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+          <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+            <input
+              type="checkbox"
+              checked={str(p.itemBg, "#1e293b") === "transparent"}
+              onChange={(e) => set("itemBg", e.target.checked ? "transparent" : "#1e293b")}
+            />
+            Transparent
+          </label>
+          {str(p.itemBg, "#1e293b") !== "transparent" && (
+            <Color value={str(p.itemBg, "#1e293b")} onChange={(v) => set("itemBg", v)} />
+          )}
+        </span>
+      </Row>
 
       <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Video Settings
       </div>
+      {layout === "grid" && (
+        <Row label="Show controls">
+          <input type="checkbox" checked={bool(p.showControls, false)} onChange={(e) => set("showControls", e.target.checked)} />
+        </Row>
+      )}
       <Row label="Video muted">
         <input type="checkbox" checked={bool(p.videoMuted, true)} onChange={(e) => set("videoMuted", e.target.checked)} />
       </Row>

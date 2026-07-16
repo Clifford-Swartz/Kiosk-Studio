@@ -43,6 +43,7 @@ const TYPE_DEFAULTS: Record<
       volume: 1.0,
       playbackRate: 1.0,
       preload: "metadata",
+      showControls: false,
     },
   },
   audio: {
@@ -70,6 +71,7 @@ const TYPE_DEFAULTS: Record<
     height: 520,
     props: {
       layout: "grid",
+      fit: "cover",
       columns: 3,
       gap: 16,
       activeIndex: 0,
@@ -77,6 +79,7 @@ const TYPE_DEFAULTS: Record<
       itemBg: "#1e293b",
       titleColor: "#f8fafc",
       subtitleColor: "#94a3b8",
+      showControls: false,
       items: [
         { id: "i1", title: "Item One", subtitle: "Subtitle", image: "", thumbnail: "" },
         { id: "i2", title: "Item Two", subtitle: "Subtitle", image: "", thumbnail: "" },

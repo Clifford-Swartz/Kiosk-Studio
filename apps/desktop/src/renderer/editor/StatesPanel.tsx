@@ -183,7 +183,7 @@ function StateEditor({
 }) {
   const scene = useEditor((s) => s.activeScene());
   const updateActiveScene = useEditor((s) => s.updateActiveScene);
-  const selectElement = useEditor((s) => s.selectElement);
+  const hoverElement = useEditor((s) => s.hoverElement);
   const states = scene.states ?? {};
   const state = states[stateName];
 
@@ -297,7 +297,8 @@ function StateEditor({
           <div
             key={elementId}
             onClick={() => onSelectElement(elementId)}
-            onMouseEnter={() => selectElement(elementId)}
+            onMouseEnter={() => hoverElement(elementId)}
+            onMouseLeave={() => hoverElement(null)}
             style={{
               padding: "8px",
               background: "#161c26",

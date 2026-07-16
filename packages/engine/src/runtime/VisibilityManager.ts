@@ -23,7 +23,10 @@ export class VisibilityManager {
    * @returns opacity value: visible ? baseOpacity : 0
    */
   static visibleToOpacity(visible: boolean, baseOpacity: number = 1): number {
-    return visible ? baseOpacity : 0;
+    // baseOpacity 0 means the element is hidden at rest (e.g. Scene Structure's
+    // eye toggle). An override forcing visible=true must still show it, so fall
+    // back to fully opaque rather than the hidden base value.
+    return visible ? (baseOpacity > 0 ? baseOpacity : 1) : 0;
   }
 
   /**

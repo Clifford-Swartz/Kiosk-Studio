@@ -283,8 +283,17 @@ export function SceneStructure() {
               // Block selection if element is locked
               if (el.locked) return;
 
-              // Ctrl+click = add to selection
-              if (e.ctrlKey || e.metaKey) {
+              // Ctrl+click a layer/collection = select all of its children, not the
+              // container itself (the container row stays unhighlighted).
+              if ((e.ctrlKey || e.metaKey) && canAcceptChildren && el.children && el.children.length > 0) {
+                const childIds = new Set(selectedIds);
+                for (const c of el.children) {
+                  if (!c.locked) childIds.add(c.id);
+                }
+                selectElements(childIds);
+              }
+              // Ctrl+click a regular element = toggle it in the selection.
+              else if (e.ctrlKey || e.metaKey) {
                 if (selectedIds.has(el.id)) {
                   const next = new Set(selectedIds);
                   next.delete(el.id);
@@ -293,12 +302,7 @@ export function SceneStructure() {
                   addToSelection([el.id]);
                 }
               }
-              // Click layer = select all direct children (if not locked)
-              else if ((el.type === "layer" || el.type === "collection") && el.children && el.children.length > 0) {
-                const childIds = new Set(el.children.filter(c => !c.locked).map(c => c.id));
-                selectElements(childIds);
-              }
-              // Regular click = single select
+              // Plain click = select only this row (layer or element).
               else {
                 selectElement(el.id);
               }

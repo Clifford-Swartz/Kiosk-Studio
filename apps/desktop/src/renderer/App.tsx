@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Player, parseProject } from "@kiosk/engine";
 import { EditorShell } from "./editor/EditorShell.js";
 import { useEditor } from "./editor/store.js";
@@ -25,6 +25,20 @@ export function App() {
   const filePath = useEditor((s) => s.filePath);
   const loadProject = useEditor((s) => s.loadProject);
   const markSaved = useEditor((s) => s.markSaved);
+
+  // Validate the in-memory project before handing it to the Player/KioskRuntime;
+  // this is exactly the round-trip a saved file would go through. Memoized on
+  // `project` so unrelated App re-renders don't manufacture a new object
+  // reference each time — the Player treats project identity changes as scene
+  // updates, which would otherwise reset live interaction state (e.g. active
+  // scene states) on every re-render.
+  const validatedProject = useMemo(() => {
+    try {
+      return { project: parseProject(JSON.parse(JSON.stringify(project))), error: null as string | null };
+    } catch (err) {
+      return { project: null, error: String(err) };
+    }
+  }, [project]);
 
   // Test hooks: expose live project + load/addImage actions for the Playwright
   // scripts (drive flows without native dialogs). Harmless in prod.
@@ -213,23 +227,15 @@ export function App() {
   if (loadError) return <Centered text={`Failed to load project:\n${loadError}`} error />;
 
   if (mode === "kiosk") {
-    let validated;
-    try {
-      validated = parseProject(JSON.parse(JSON.stringify(project)));
-    } catch (err) {
-      return <Centered text={`Invalid project:\n${String(err)}`} error />;
+    if (!validatedProject.project) {
+      return <Centered text={`Invalid project:\n${validatedProject.error}`} error />;
     }
-    return <KioskRuntime project={validated} filePath={filePath} onExit={exitKiosk} />;
+    return <KioskRuntime project={validatedProject.project} filePath={filePath} onExit={exitKiosk} />;
   }
 
   if (mode === "player") {
-    // Validate the in-memory project before handing it to the Player; this is
-    // exactly the round-trip a saved file would go through.
-    let validated;
-    try {
-      validated = parseProject(JSON.parse(JSON.stringify(project)));
-    } catch (err) {
-      return <Centered text={`Invalid project:\n${String(err)}`} error />;
+    if (!validatedProject.project) {
+      return <Centered text={`Invalid project:\n${validatedProject.error}`} error />;
     }
 
     const handleExitPlayer = () => {
@@ -244,7 +250,7 @@ export function App() {
 
     return (
       <div style={{ position: "absolute", inset: 0 }}>
-        <Player project={validated} assetBaseUrl={projectAssetBase(filePath)} hideAudioIcons={true} />
+        <Player project={validatedProject.project} assetBaseUrl={projectAssetBase(filePath)} hideAudioIcons={true} />
         <button onClick={handleExitPlayer} style={backToEditor}>
           ✕ Exit preview
         </button>

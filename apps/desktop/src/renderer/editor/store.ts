@@ -26,6 +26,8 @@ export interface EditorState {
   selectedId: string | null;
   /** Set of selected element IDs (for multi-select support). When empty, selectedId is used. */
   selectedIds: Set<string>;
+  /** Element to outline on canvas without changing selection/Properties (e.g. hovering a states-panel row). */
+  hoveredElementId: string | null;
   /** Path the project was loaded from / last saved to, if any. */
   filePath: string | null;
   /** Unsaved changes since last load/save. */
@@ -93,6 +95,8 @@ export interface EditorState {
   /** Reparent element into a new parent (or scene root if null). Returns error message if invalid. */
   reparentElement: (elementId: string, newParentId: string | null) => string | null;
   selectElement: (id: string | null) => void;
+  /** Set/clear the hovered-element outline shown on canvas, independent of selection. */
+  hoverElement: (id: string | null) => void;
   /** Select multiple elements (replaces current selection). */
   selectElements: (ids: Set<string>) => void;
   /** Add elements to current selection. */
@@ -184,6 +188,26 @@ function patchElement(
   return { ...scene, elements: patchRecursive(scene.elements) };
 }
 
+/**
+ * Move element `id` to `toIndex` within whichever sibling array currently
+ * contains it (top-level scene.elements, or a layer/collection's `children`).
+ * Reordering never crosses containers — moving into a different parent is
+ * reparentElement's job. zIndex is renumbered within that same sibling array
+ * so each layer's children keep their own local stacking order.
+ */
+function reorderWithinSiblings(elements: Element[], id: string, toIndex: number): Element[] {
+  const from = elements.findIndex((e) => e.id === id);
+  if (from !== -1) {
+    const els = [...elements];
+    const [moved] = els.splice(from, 1);
+    els.splice(Math.max(0, Math.min(toIndex, els.length)), 0, moved);
+    return els.map((e, i) => ({ ...e, zIndex: i + 1 }));
+  }
+  return elements.map((el) =>
+    el.children ? { ...el, children: reorderWithinSiblings(el.children, id, toIndex) } : el
+  );
+}
+
 /** Find an element by ID, searching recursively through nested children. */
 function findElement(elements: Element[], id: string): Element | null {
   for (const el of elements) {
@@ -227,6 +251,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   activeSceneId: "",
   selectedId: null,
   selectedIds: new Set(),
+  hoveredElementId: null,
   filePath: null,
   dirty: false,
   historyNonce: 0,
@@ -480,15 +505,10 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((state) => {
       if (state.isModalEditingActive()) return state;
       return {
-        project: withActiveScene(state, (scene) => {
-          const els = [...scene.elements];
-          const from = els.findIndex((e) => e.id === id);
-          if (from === -1) return scene;
-          const [moved] = els.splice(from, 1);
-          els.splice(Math.max(0, Math.min(toIndex, els.length)), 0, moved);
-          // Renumber zIndex to match array order so draw order is explicit.
-          return { ...scene, elements: els.map((e, i) => ({ ...e, zIndex: i + 1 })) };
-        }),
+        project: withActiveScene(state, (scene) => ({
+          ...scene,
+          elements: reorderWithinSiblings(scene.elements, id, toIndex),
+        })),
         dirty: true,
       };
     }),
@@ -626,6 +646,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   selectElement: (id) => {
     if (get().isModalEditingActive()) return;
     set({ selectedId: id, selectedIds: new Set() });
+  },
+
+  hoverElement: (id) => {
+    set({ hoveredElementId: id });
   },
 
   selectElements: (ids) => {

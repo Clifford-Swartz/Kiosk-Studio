@@ -180,6 +180,7 @@ export function Canvas({
   const scene = useEditor((s) => s.activeScene());
   const selectedId = useEditor((s) => s.selectedId);
   const selectedIds = useEditor((s) => s.selectedIds);
+  const hoveredElementId = useEditor((s) => s.hoveredElementId);
   const editingId = useEditor((s) => s.editingId);
   const maskEditingId = useEditor((s) => s.maskEditingId);
   const selectElement = useEditor((s) => s.selectElement);
@@ -289,6 +290,7 @@ export function Canvas({
   }, [setUserZoom, setPan]);
 
   const selected = selectedId ? findElementRecursive(scene.elements, selectedId) : null;
+  const hoveredEl = hoveredElementId ? findElementRecursive(scene.elements, hoveredElementId) : null;
   const editingEl = editingId ? findElementRecursive(scene.elements, editingId) : null;
   const maskEditingEl = maskEditingId ? findElementRecursive(scene.elements, maskEditingId) : null;
 
@@ -757,6 +759,24 @@ export function Canvas({
             );
           })
         }
+
+        {/* Hover outline (e.g. hovering an override row in the States panel) — visual only, doesn't affect selection */}
+        {hoveredEl && hoveredElementId !== selectedId && !selectedIds.has(hoveredElementId ?? "") && !editingEl && !maskEditingEl && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: hoveredEl.width,
+              height: hoveredEl.height,
+              transform: `translate(${hoveredEl.x}px, ${hoveredEl.y}px) rotate(${hoveredEl.rotation}deg)`,
+              transformOrigin: "center center",
+              outline: `${2 / finalScale}px dashed #f59e0b`,
+              zIndex: 999998,
+              pointerEvents: "none",
+            }}
+          />
+        )}
 
         {/* Marquee selection box */}
         {drag.current?.kind === "marquee" && (() => {

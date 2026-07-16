@@ -386,10 +386,16 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     animationRuntime.cancelAll();
     // NOTE: Don't clear imageLoadQueue here - it's cleared in goToSceneInternal
     // after transitions complete to avoid unloading images mid-transition
+  }, [activeSceneId, animationRuntime]);
+
+  // Keep StateRuntime's scene data fresh on every project update (editor edits,
+  // re-validation, etc.) without clobbering an active state — setScene only
+  // clears activeStateName when the scene id actually changes.
+  useEffect(() => {
     if (activeScene) {
       stateRuntime.setScene(activeScene);
     }
-  }, [activeSceneId, activeScene, animationRuntime, stateRuntime]);
+  }, [activeScene, stateRuntime]);
 
   // Track which scene entries have already fired enterScene interactions.
   // Keys are scene layer keys (e.g., "scene2-5"), which are unique per entry
@@ -479,6 +485,30 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       // Run sequentially to avoid setState races
       for (const interaction of element.interactions) {
         if (interaction.trigger === "hoverEnd") {
+          await runInteraction(interaction, ctx, element);
+        }
+      }
+    },
+    [ctx]
+  );
+
+  const handlePress = useCallback(
+    async (element: Element) => {
+      // Run sequentially to avoid setState races
+      for (const interaction of element.interactions) {
+        if (interaction.trigger === "press") {
+          await runInteraction(interaction, ctx, element);
+        }
+      }
+    },
+    [ctx]
+  );
+
+  const handleRelease = useCallback(
+    async (element: Element) => {
+      // Run sequentially to avoid setState races
+      for (const interaction of element.interactions) {
+        if (interaction.trigger === "release") {
           await runInteraction(interaction, ctx, element);
         }
       }
@@ -674,11 +704,14 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
                 onTap={handleTap}
                 onHover={handleHover}
                 onHoverEnd={handleHoverEnd}
+                onPress={handlePress}
+                onRelease={handleRelease}
                 assetBaseUrl={assetBaseUrl}
                 playing
                 onAudioRef={onAudioRef}
                 onVideoRef={onVideoRef}
                 editorMode={editorMode}
+                resolveElement={live ? resolveElement : undefined}
               />
             );
           })}

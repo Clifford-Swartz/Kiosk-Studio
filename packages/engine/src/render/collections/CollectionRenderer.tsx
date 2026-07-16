@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { resolveSrc } from "../ElementRenderer.js";
+import { VideoControls } from "../VideoControls.js";
 import { imageLoadQueue } from "../../runtime/ImageLoadQueue.js";
 
 /**
@@ -18,6 +19,8 @@ function isVideo(src: string): boolean {
   const ext = src.split('.').pop()?.toLowerCase();
   return ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'ogg';
 }
+
+export type CollectionFit = "cover" | "contain" | "fill";
 
 export interface CollectionItem {
   id: string;
@@ -41,6 +44,9 @@ function str(v: unknown, fallback = ""): string {
 function num(v: unknown, fallback: number): number {
   return typeof v === "number" ? v : fallback;
 }
+function bool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
+}
 function items(v: unknown): CollectionItem[] {
   return Array.isArray(v) ? (v as CollectionItem[]) : [];
 }
@@ -53,6 +59,7 @@ export function CollectionRenderer({
   playing = false,
 }: CollectionRendererProps) {
   const layout = str(props.layout, "grid");
+  const fit = str(props.fit, "cover") as CollectionFit;
   const list = items(props.items);
   const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
   const [activeIndex, setActiveIndex] = useState<number | null>(layout === "grid" ? null : 0);
@@ -118,7 +125,7 @@ export function CollectionRenderer({
     };
   }, []);
 
-  const common = { list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex };
+  const common = { list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex, fit };
 
   switch (layout) {
     case "carousel":
@@ -200,7 +207,7 @@ function ItemCard({
   style?: React.CSSProperties;
   videoRef?: (el: HTMLVideoElement | null) => void;
   isActive?: boolean;
-  objectFit?: "cover" | "contain";
+  objectFit?: CollectionFit;
   useThumbnail?: boolean;
 }) {
   // Use thumbnail for inactive cards when available, full image/video only when active
@@ -220,10 +227,13 @@ function ItemCard({
   // Placeholder for loading images
   const placeholderSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='240' viewBox='0 0 320 240'%3E%3Crect width='320' height='240' fill='%230b1016'/%3E%3C/svg%3E";
 
+  const itemBg = str(props.itemBg, "#1e293b");
+  const transparentBg = itemBg === "transparent";
+
   return (
     <div
       style={{
-        background: str(props.itemBg, "#1e293b"),
+        background: itemBg,
         borderRadius: 10,
         overflow: "hidden",
         display: "flex",
@@ -231,7 +241,7 @@ function ItemCard({
         ...style,
       }}
     >
-      <div style={{ flex: 1, minHeight: 0, background: "#0b1016" }}>
+      <div style={{ flex: 1, minHeight: 0, background: transparentBg ? "transparent" : "#0b1016" }}>
         {src ? (
           hasVideo ? (
             <video
@@ -285,15 +295,18 @@ interface LayoutProps {
   videoRefs: React.MutableRefObject<Map<string, HTMLVideoElement>>;
   activeIndex: number | null;
   setActiveIndex: (idx: number | null) => void;
+  fit: CollectionFit;
 }
 
 // --- grid ------------------------------------------------------------------
 
-function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
+function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
   const columns = Math.max(1, num(props.columns, 3));
   const gap = num(props.gap, 16);
   const focusedIndex = activeIndex;
   const isFocused = focusedIndex !== null;
+  const showControls = playing && bool(props.showControls, false);
+  const [focusedVideoEl, setFocusedVideoEl] = useState<HTMLVideoElement | null>(null);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
@@ -321,6 +334,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
               assetBaseUrl={assetBaseUrl}
               videoRef={(el) => el && videoRefs.current.set(it.id, el)}
               isActive={idx === activeIndex}
+              objectFit={fit}
               useThumbnail={true}
             />
           </div>
@@ -353,13 +367,16 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
                 {src ? (
                   hasVideo ? (
                     <video
-                      ref={(el) => el && videoRefs.current.set(item.id, el)}
+                      ref={(el) => {
+                        if (el) videoRefs.current.set(item.id, el);
+                        setFocusedVideoEl(el);
+                      }}
                       src={src}
                       preload="auto"
                       style={{
                         maxWidth: "100%",
                         maxHeight: "100%",
-                        objectFit: "contain",
+                        objectFit: fit,
                       }}
                     />
                   ) : (
@@ -369,7 +386,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
                       style={{
                         maxWidth: "100%",
                         maxHeight: "100%",
-                        objectFit: "contain",
+                        objectFit: fit,
                       }}
                       draggable={false}
                       decoding="async"
@@ -387,6 +404,8 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
                       right: 0,
                       bottom: 0,
                       padding: 24,
+                      // Video controls overlay the bottom 52px; lift the title above them so it isn't eclipsed.
+                      paddingBottom: hasVideo && showControls ? 24 + 52 : 24,
                       background: "linear-gradient(transparent, rgba(0,0,0,0.7))",
                     }}
                   >
@@ -402,6 +421,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
                     )}
                   </div>
                 )}
+                {hasVideo && showControls && <VideoControls video={focusedVideoEl} />}
               </>
             );
           })()}
@@ -413,7 +433,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
 
 // --- carousel --------------------------------------------------------------
 
-function Carousel({ list, props, assetBaseUrl, width, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
+function Carousel({ list, props, assetBaseUrl, width, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
   const n = list.length || 1;
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
   const cardW = width * 0.6;
@@ -447,6 +467,7 @@ function Carousel({ list, props, assetBaseUrl, width, videoRefs, activeIndex, se
                 style={{ width: "100%", height: "100%" }}
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
+                objectFit={fit}
                 useThumbnail={true}
               />
             </div>
@@ -461,7 +482,7 @@ function Carousel({ list, props, assetBaseUrl, width, videoRefs, activeIndex, se
 
 // --- wheel -----------------------------------------------------------------
 
-function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
+function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
   const n = list.length || 1;
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
 
@@ -506,7 +527,7 @@ function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeInde
                 style={{ width: "100%", height: "100%" }}
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
-                objectFit="contain"
+                objectFit={fit}
                 useThumbnail={true}
               />
             </div>
@@ -521,7 +542,7 @@ function Wheel({ list, props, assetBaseUrl, width, height, videoRefs, activeInde
 
 // --- coverflow -------------------------------------------------------------
 
-function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
+function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
   const n = list.length || 1;
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
   const cardW = width * 0.6;
@@ -559,6 +580,7 @@ function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, s
                 style={{ width: "100%", height: "100%" }}
                 videoRef={(el) => el && videoRefs.current.set(it.id, el)}
                 isActive={i === activeIndex}
+                objectFit={fit}
                 useThumbnail={true}
               />
             </div>
@@ -573,7 +595,7 @@ function Coverflow({ list, props, assetBaseUrl, width, videoRefs, activeIndex, s
 
 // --- ken burns -------------------------------------------------------------
 
-function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, playing }: LayoutProps & { playing?: boolean }) {
+function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
   const n = list.length || 1;
   const idx = activeIndex !== null ? ((activeIndex % n) + n) % n : 0;
   const interval = Math.max(1000, num(props.intervalMs, 4000));
@@ -617,7 +639,7 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
                   style={{
                     width: "100%",
                     height: "100%",
-                    objectFit: "cover",
+                    objectFit: fit,
                     transform: isCur && playing ? "scale(1.12)" : "scale(1)",
                     transition: `transform ${interval}ms linear`,
                   }}
@@ -632,7 +654,7 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
                   style={{
                     width: "100%",
                     height: "100%",
-                    objectFit: "cover",
+                    objectFit: fit,
                     transform: isCur && playing ? "scale(1.12)" : "scale(1)",
                     transition: `transform ${interval}ms linear`,
                   }}

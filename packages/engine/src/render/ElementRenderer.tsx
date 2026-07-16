@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Element } from "../model/types.js";
 import { CollectionRenderer } from "./collections/CollectionRenderer.js";
+import { VideoControls } from "./VideoControls.js";
 import { eventBus } from "../events/EventBus.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
 
@@ -12,6 +13,10 @@ export interface ElementRendererProps {
   onHover?: (element: Element) => void;
   /** Fired when an element with a `hoverEnd` interaction is left. */
   onHoverEnd?: (element: Element) => void;
+  /** Fired when an element with a `press` interaction is pointer-pressed. */
+  onPress?: (element: Element) => void;
+  /** Fired when an element with a `release` interaction is pointer-released. */
+  onRelease?: (element: Element) => void;
   /**
    * Base URL for resolving relative asset `src` values (e.g. "assets/x.png").
    * Typically a `file://<projectDir>/` URL. Absolute URLs pass through.
@@ -25,6 +30,12 @@ export interface ElementRendererProps {
   onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
   /** True when rendering in editor mode; disables button interaction overlays. */
   editorMode?: boolean;
+  /**
+   * Resolves an element through the binding/state/override/animation pipeline.
+   * Applied to children too, so elements nested in a "layer" container pick up
+   * scene-state and binding overrides the same as top-level elements.
+   */
+  resolveElement?: (element: Element) => Element;
 }
 
 // Embedded fallback: 1×1 transparent PNG data URI (for empty src fields)
@@ -70,12 +81,13 @@ export function resolveSrc(src: string, base?: string): string {
  *
  * Memoized to prevent unnecessary re-renders when parent updates but element props unchanged.
  */
-export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode }: ElementRendererProps) {
+export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode, resolveElement }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
   const isInteractive = element.interactions.some((i) => i.trigger === "tap");
   const isHoverable = element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
+  const isPressable = element.interactions.some((i) => i.trigger === "press" || i.trigger === "release");
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -87,7 +99,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     zIndex,
     transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
     transformOrigin: "center center",
-    cursor: isInteractive ? "pointer" : "default",
+    cursor: isInteractive || isPressable ? "pointer" : "default",
     userSelect: "none",
   };
 
@@ -111,20 +123,44 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
       }
     : undefined;
 
-  const children = element.children?.map((child) => (
-    <ElementRenderer
-      key={child.id}
-      element={child}
-      onTap={onTap}
-      onHover={onHover}
-      onHoverEnd={onHoverEnd}
-      assetBaseUrl={assetBaseUrl}
-      playing={playing}
-      editorMode={editorMode}
-      onAudioRef={onAudioRef}
-      onVideoRef={onVideoRef}
-    />
-  ));
+  const handlePointerDown = onPress && isPressable
+    ? (e: React.PointerEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "press")) {
+          onPress(element);
+        }
+      }
+    : undefined;
+
+  const handlePointerUp = onRelease && isPressable
+    ? (e: React.PointerEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "release")) {
+          onRelease(element);
+        }
+      }
+    : undefined;
+
+  const children = element.children?.map((child) => {
+    const resolvedChild = resolveElement ? resolveElement(child) : child;
+    return (
+      <ElementRenderer
+        key={child.id}
+        element={resolvedChild}
+        onTap={onTap}
+        onHover={onHover}
+        onHoverEnd={onHoverEnd}
+        onPress={onPress}
+        onRelease={onRelease}
+        assetBaseUrl={assetBaseUrl}
+        playing={playing}
+        editorMode={editorMode}
+        onAudioRef={onAudioRef}
+        onVideoRef={onVideoRef}
+        resolveElement={resolveElement}
+      />
+    );
+  });
 
   switch (type) {
     case "rectangle":
@@ -140,6 +176,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
           {children}
         </div>
@@ -156,6 +194,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
           {children}
         </TextElement>
@@ -181,6 +221,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
           onError={(e) => {
             // If bundled placeholder fails to load, fall back to embedded SVG
             const target = e.currentTarget;
@@ -294,6 +336,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
               onClick={() => onTap?.(element)}
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
             />
           )}
         </>
@@ -335,6 +379,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
           {children}
           {tint && (
@@ -360,6 +406,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
           <CollectionRenderer
             width={width}
@@ -384,7 +432,9 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     prevProps.editorMode === nextProps.editorMode &&
     prevProps.onTap === nextProps.onTap &&
     prevProps.onHover === nextProps.onHover &&
-    prevProps.onHoverEnd === nextProps.onHoverEnd
+    prevProps.onHoverEnd === nextProps.onHoverEnd &&
+    prevProps.onPress === nextProps.onPress &&
+    prevProps.onRelease === nextProps.onRelease
   );
 });
 
@@ -608,10 +658,14 @@ interface VideoElementProps {
  * Supports standard video formats (mp4, webm, ogg).
  */
 function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasError, setHasError] = useState(false);
   const [shouldLoad, setShouldLoad] = useState(false);
+  // Tracks the same node as videoRef, but as state — a prop read from
+  // videoRef.current would still see the pre-mount value on the render that
+  // introduces the <video> tag, since refs attach during commit.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const { props } = element;
 
   const src = resolveSrc(str(props.src, ""), assetBaseUrl);
@@ -720,7 +774,10 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
     <div ref={containerRef} data-element-id={element.id} style={baseStyle}>
       {hasSource && shouldLoad && (
         <video
-          ref={videoRef}
+          ref={(el) => {
+            videoRef.current = el;
+            setVideoEl(el);
+          }}
           src={src}
           autoPlay={bool(props.autoplay, true) && playing}
           loop={bool(props.loop, true)}
@@ -747,6 +804,9 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
           }}
         />
+      )}
+      {hasSource && shouldLoad && playing && bool(props.showControls, false) && (
+        <VideoControls video={videoEl} />
       )}
       {!hasSource && (
         <div
@@ -823,6 +883,8 @@ function TextElement({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  onPointerDown,
+  onPointerUp,
   children,
 }: {
   elementId: string;
@@ -833,6 +895,8 @@ function TextElement({
   onClick?: () => void;
   onMouseEnter?: (e: React.MouseEvent) => void;
   onMouseLeave?: (e: React.MouseEvent) => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
+  onPointerUp?: (e: React.PointerEvent) => void;
   children?: React.ReactNode;
 }) {
   const align = str(props.align, "left") as "left" | "center" | "right";
@@ -891,6 +955,8 @@ function TextElement({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
     >
       <div ref={innerRef} style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: justify }}>
         {lines.map((r, i) => {

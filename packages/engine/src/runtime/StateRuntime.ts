@@ -45,8 +45,11 @@ export class StateRuntime {
    * Update current scene (called on scene navigation).
    */
   setScene(scene: Scene): void {
+    const isNewScene = this.currentScene?.id !== scene.id;
     this.currentScene = scene;
-    this.activeStateName = null; // Reset to default state
+    if (isNewScene) {
+      this.activeStateName = null; // Reset to default state only on real navigation
+    }
     // Invalidate cache when scene changes
     if (this.notifyChange) {
       this.notifyChange();

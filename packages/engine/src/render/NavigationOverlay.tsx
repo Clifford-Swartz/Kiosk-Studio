@@ -27,6 +27,15 @@ export function NavigationOverlay({
     return null;
   }
 
+  // Sizes scale with the viewport (vmin) so buttons stay a consistent,
+  // reachable touch target on 4K/8K kiosk displays instead of a fixed
+  // pixel size that shrinks relative to screen size as resolution grows.
+  // Clamped so small preview windows still get a usable minimum size.
+  const buttonSize = "clamp(44px, 5vmin, 96px)";
+  const iconSize = "clamp(20px, 2.4vmin, 46px)";
+  const gap = "clamp(8px, 0.8vmin, 20px)";
+  const edgeOffset = "clamp(16px, 2vmin, 40px)";
+
   return (
     <div
       style={{
@@ -40,11 +49,11 @@ export function NavigationOverlay({
       <div
         style={{
           position: "absolute",
-          bottom: 20,
-          left: 20,
+          bottom: edgeOffset,
+          left: edgeOffset,
           display: "flex",
           flexDirection: "column-reverse",
-          gap: 8,
+          gap,
           pointerEvents: "auto",
         }}
       >
@@ -53,13 +62,13 @@ export function NavigationOverlay({
           <button
             onClick={onBack}
             style={{
-              width: 50,
-              height: 50,
+              width: buttonSize,
+              height: buttonSize,
               borderRadius: "50%",
               border: "none",
               background: "rgba(0, 0, 0, 0.6)",
               color: "#fff",
-              fontSize: 24,
+              fontSize: iconSize,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -83,13 +92,13 @@ export function NavigationOverlay({
           <button
             onClick={onHome}
             style={{
-              width: 50,
-              height: 50,
+              width: buttonSize,
+              height: buttonSize,
               borderRadius: "50%",
               border: "none",
               background: "rgba(0, 0, 0, 0.6)",
               color: "#fff",
-              fontSize: 24,
+              fontSize: iconSize,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, webContents, screen, Menu } from "electron";
 import { getConnectorFactory, type Connector, type ConnectorValue, type SourceSpec } from "@kiosk/connectors";
 import { parsePptx } from "@kiosk/pptx";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, createReadStream } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile, mkdir, appendFile, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, appendFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { Readable } from "node:stream";
 
 /**
  * Custom protocol for serving project assets. Using file:// directly fails in
@@ -90,11 +91,16 @@ async function isProjectExported(projectDir: string): Promise<boolean> {
   }
 }
 
+/** Scene.states shape (ADR 0011): named states override element props, incl. media src. */
+type SceneStates = Record<string, { elements?: Record<string, { props?: Record<string, unknown> }> }>;
+
 /**
  * Rewrite asset paths for export: "user-content/file" → "assets/file"
  */
 function rewritePathsForExport(projectObj: Record<string, unknown>): void {
-  const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }> | undefined;
+  const scenes = projectObj.scenes as
+    | Array<{ background?: unknown; elements: unknown[]; states?: SceneStates }>
+    | undefined;
   if (!scenes) return;
 
   const rewritePath = (path: unknown): unknown => {
@@ -105,22 +111,29 @@ function rewritePathsForExport(projectObj: Record<string, unknown>): void {
     return path;
   };
 
-  const processElement = (el: Record<string, unknown>): void => {
-    if (el.props && typeof el.props === "object") {
-      const props = el.props as Record<string, unknown>;
-      if (props.src) props.src = rewritePath(props.src);
-      if (props.background) props.background = rewritePath(props.background);
+  // Shared by element base props and state-override props (ADR 0011: state
+  // overrides can set props.src/imageSrc, which reference media the same way
+  // base element props do).
+  const rewritePropsInPlace = (props: Record<string, unknown>): void => {
+    if (props.src) props.src = rewritePath(props.src);
+    if (props.background) props.background = rewritePath(props.background);
+    if (props.imageSrc) props.imageSrc = rewritePath(props.imageSrc);
 
-      // Collection items: rewrite image + thumbnail paths
-      if (Array.isArray(props.items)) {
-        for (const item of props.items) {
-          if (item && typeof item === "object") {
-            const i = item as Record<string, unknown>;
-            if (i.image) i.image = rewritePath(i.image);
-            if (i.thumbnail) i.thumbnail = rewritePath(i.thumbnail);
-          }
+    // Collection items: rewrite image + thumbnail paths
+    if (Array.isArray(props.items)) {
+      for (const item of props.items) {
+        if (item && typeof item === "object") {
+          const i = item as Record<string, unknown>;
+          if (i.image) i.image = rewritePath(i.image);
+          if (i.thumbnail) i.thumbnail = rewritePath(i.thumbnail);
         }
       }
+    }
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      rewritePropsInPlace(el.props as Record<string, unknown>);
     }
     if (el.children && Array.isArray(el.children)) {
       el.children.forEach(processElement);
@@ -136,6 +149,15 @@ function rewritePathsForExport(projectObj: Record<string, unknown>): void {
     if (scene.elements) {
       scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
     }
+    // Rewrite state override paths
+    if (scene.states) {
+      for (const state of Object.values(scene.states)) {
+        if (!state.elements) continue;
+        for (const override of Object.values(state.elements)) {
+          if (override.props) rewritePropsInPlace(override.props);
+        }
+      }
+    }
   }
 }
 
@@ -145,7 +167,9 @@ function rewritePathsForExport(projectObj: Record<string, unknown>): void {
  */
 function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
   const refs = new Set<string>();
-  const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }> | undefined;
+  const scenes = projectObj.scenes as
+    | Array<{ background?: unknown; elements: unknown[]; states?: SceneStates }>
+    | undefined;
   if (!scenes) return [];
 
   const extractPath = (path: unknown): void => {
@@ -154,22 +178,27 @@ function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
     }
   };
 
-  const processElement = (el: Record<string, unknown>): void => {
-    if (el.props && typeof el.props === "object") {
-      const props = el.props as Record<string, unknown>;
-      if (props.src) extractPath(props.src);
-      if (props.background) extractPath(props.background);
+  // Shared by element base props and state-override props (ADR 0011).
+  const extractFromProps = (props: Record<string, unknown>): void => {
+    if (props.src) extractPath(props.src);
+    if (props.background) extractPath(props.background);
+    if (props.imageSrc) extractPath(props.imageSrc);
 
-      // Collection items: scan image + thumbnail fields
-      if (Array.isArray(props.items)) {
-        for (const item of props.items) {
-          if (item && typeof item === "object") {
-            const i = item as Record<string, unknown>;
-            if (i.image) extractPath(i.image);
-            if (i.thumbnail) extractPath(i.thumbnail);
-          }
+    // Collection items: scan image + thumbnail fields
+    if (Array.isArray(props.items)) {
+      for (const item of props.items) {
+        if (item && typeof item === "object") {
+          const i = item as Record<string, unknown>;
+          if (i.image) extractPath(i.image);
+          if (i.thumbnail) extractPath(i.thumbnail);
         }
       }
+    }
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      extractFromProps(el.props as Record<string, unknown>);
     }
     if (el.children && Array.isArray(el.children)) {
       el.children.forEach(processElement);
@@ -184,6 +213,15 @@ function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
     // Extract element paths
     if (scene.elements) {
       scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
+    }
+    // Extract state override paths
+    if (scene.states) {
+      for (const state of Object.values(scene.states)) {
+        if (!state.elements) continue;
+        for (const override of Object.values(state.elements)) {
+          if (override.props) extractFromProps(override.props);
+        }
+      }
     }
   }
 
@@ -597,12 +635,19 @@ async function exportProject(
     // Handle deduplication remapping
     for (const [original, renamed] of copiedFiles.entries()) {
       if (original !== renamed) {
-        const scenes = projectObj.scenes as Array<{ background?: unknown; elements: unknown[] }>;
+        const scenes = projectObj.scenes as Array<{
+          background?: unknown;
+          elements: unknown[];
+          states?: SceneStates;
+        }>;
+        const remapProps = (props: Record<string, unknown>): void => {
+          if (props.src === `assets/${original}`) props.src = `assets/${renamed}`;
+          if (props.background === `assets/${original}`) props.background = `assets/${renamed}`;
+          if (props.imageSrc === `assets/${original}`) props.imageSrc = `assets/${renamed}`;
+        };
         const replaceInElement = (el: Record<string, unknown>): void => {
           if (el.props && typeof el.props === "object") {
-            const props = el.props as Record<string, unknown>;
-            if (props.src === `assets/${original}`) props.src = `assets/${renamed}`;
-            if (props.background === `assets/${original}`) props.background = `assets/${renamed}`;
+            remapProps(el.props as Record<string, unknown>);
           }
           if (el.children && Array.isArray(el.children)) {
             el.children.forEach(replaceInElement);
@@ -616,6 +661,15 @@ async function exportProject(
           // Replace element paths
           if (scene.elements) {
             scene.elements.forEach((el) => replaceInElement(el as Record<string, unknown>));
+          }
+          // Replace state override paths
+          if (scene.states) {
+            for (const state of Object.values(scene.states)) {
+              if (!state.elements) continue;
+              for (const override of Object.values(state.elements)) {
+                if (override.props) remapProps(override.props);
+              }
+            }
           }
         }
       }
@@ -800,21 +854,20 @@ app.whenReady().then(async () => {
       }
     }
 
-    const fileUrl = pathToFileURL(absPath).toString();
     console.log(`[${ASSET_SCHEME}] Resolved: ${absPath}`);
 
+    // Serve directly from fs rather than net.fetch(file://...): Electron's
+    // net.fetch does not honor Range headers for the file: scheme — it always
+    // returns the whole file with status 200, regardless of what range was
+    // requested. That breaks HTML5 video seeking: a mid-file seek issues a
+    // ranged request, gets back the full file from byte 0 with status 200
+    // instead of 206, and Chromium's media pipeline reinterprets that as the
+    // start of the resource, snapping playback back to time 0. Streaming the
+    // requested byte range ourselves keeps Range/206 semantics correct.
     try {
-      const fetchHeaders = new Headers();
-      const range = request.headers.get("range");
-      if (range) {
-        fetchHeaders.set("Range", range);
-        console.log(`[${ASSET_SCHEME}] Range: ${range}`);
-      }
+      const stats = await stat(absPath);
+      const fileSize = stats.size;
 
-      const response = await net.fetch(fileUrl, { headers: fetchHeaders });
-      console.log(`[${ASSET_SCHEME}] Fetch: ${response.status}`);
-
-      // Ensure correct MIME type
       const ext = extname(absPath).toLowerCase();
       const mimeMap: Record<string, string> = {
         ".mp4": "video/mp4", ".webm": "video/webm",
@@ -822,19 +875,34 @@ app.whenReady().then(async () => {
         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
       };
-      const contentType = mimeMap[ext] || response.headers.get("content-type") || "application/octet-stream";
+      const contentType = mimeMap[ext] || "application/octet-stream";
 
       const headers = new Headers();
       headers.set("Content-Type", contentType);
       headers.set("Accept-Ranges", "bytes");
 
-      const contentLength = response.headers.get("content-length");
-      if (contentLength) headers.set("Content-Length", contentLength);
+      const range = request.headers.get("range");
+      if (range) {
+        console.log(`[${ASSET_SCHEME}] Range: ${range}`);
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        const start = match?.[1] ? parseInt(match[1], 10) : 0;
+        const end = match?.[2] ? parseInt(match[2], 10) : fileSize - 1;
 
-      const contentRange = response.headers.get("content-range");
-      if (contentRange) headers.set("Content-Range", contentRange);
+        if (!match || start > end || end >= fileSize) {
+          headers.set("Content-Range", `bytes */${fileSize}`);
+          return new Response("Range Not Satisfiable", { status: 416, headers });
+        }
 
-      return new Response(response.body, { status: response.status, headers });
+        headers.set("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        headers.set("Content-Length", String(end - start + 1));
+
+        const stream = createReadStream(absPath, { start, end });
+        return new Response(Readable.toWeb(stream) as unknown as ReadableStream, { status: 206, headers });
+      }
+
+      headers.set("Content-Length", String(fileSize));
+      const stream = createReadStream(absPath);
+      return new Response(Readable.toWeb(stream) as unknown as ReadableStream, { status: 200, headers });
     } catch (err) {
       console.error(`[${ASSET_SCHEME}] Failed to load ${absPath}:`, err);
       return new Response("Not Found", { status: 404 });
