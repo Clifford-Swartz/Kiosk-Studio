@@ -355,7 +355,8 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         console.log(`[DEBUG-anim] PlayerContext.animate() wrapper completed`);
         return result;
       },
-      setState: async (stateName, animated, duration) => {
+      // `duration` is unused until the animated fade path below is implemented.
+      setState: async (stateName, animated, _duration) => {
         if (animated) {
           // Fade out, swap state, fade in
           const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;

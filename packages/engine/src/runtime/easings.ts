@@ -19,9 +19,7 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
     if (t <= 0) return 0;
     if (t >= 1) return 1;
 
-    // Binary search for x(t) = t (find t where bezier x equals input t)
-    let start = 0;
-    let end = 1;
+    // Solve for the parameter where the bezier's x equals the input t.
     let mid = t;
 
     // Newton-Raphson iterations for precision

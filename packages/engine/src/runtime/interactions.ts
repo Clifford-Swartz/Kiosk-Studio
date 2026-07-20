@@ -1,8 +1,6 @@
 import type { Action, Interaction, Project, Element } from "../model/types.js";
 import { eventBus } from "../events/EventBus.js";
-import type { AnimationRuntime } from "./AnimationRuntime.js";
 import type { AnimatableProperty, AnimatableValue } from "./PropertyRegistry.js";
-import type { StateRuntime } from "./StateRuntime.js";
 import type { EasingCurve } from "./easings.js";
 
 /**

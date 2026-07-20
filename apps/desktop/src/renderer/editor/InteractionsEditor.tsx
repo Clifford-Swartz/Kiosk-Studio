@@ -1,5 +1,5 @@
 import { type CSSProperties } from "react";
-import type { Action, ActionType } from "@kiosk/engine";
+import type { Action, ActionType, Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 
 /**
@@ -392,7 +392,9 @@ function ActionRow({
 }: {
   action: Action;
   scenes: { id: string; name: string }[];
-  targets: { id: string; type: string; name?: string }[];
+  // Full elements: the animate UI reads geometry (x/y/width/height/opacity/rotation)
+  // off the target to capture "from"/"to" values.
+  targets: Element[];
   onChange: (patch: Partial<Action>) => void;
   onRemove: () => void;
 }) {
@@ -634,8 +636,8 @@ function ActionRow({
             {property === "position" && (
               <>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input type="number" placeholder="X" value={typeof p.from?.x === "number" ? p.from.x : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
-                  <input type="number" placeholder="Y" value={typeof p.from?.y === "number" ? p.from.y : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="X" value={subNum(p.from, "x")} onChange={(e) => setParam("from", { ...asObj(p.from), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Y" value={subNum(p.from, "y")} onChange={(e) => setParam("from", { ...asObj(p.from), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
                 </div>
                 {targetEl && (
                   <button onClick={captureFrom} style={{ ...captureBtn, marginTop: 4 }}>
@@ -647,8 +649,8 @@ function ActionRow({
             {property === "scale" && (
               <>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input type="number" placeholder="Width" value={typeof p.from?.width === "number" ? p.from.width : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
-                  <input type="number" placeholder="Height" value={typeof p.from?.height === "number" ? p.from.height : ""} onChange={(e) => setParam("from", { ...(typeof p.from === "object" ? p.from : {}), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Width" value={subNum(p.from, "width")} onChange={(e) => setParam("from", { ...asObj(p.from), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Height" value={subNum(p.from, "height")} onChange={(e) => setParam("from", { ...asObj(p.from), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
                 </div>
                 {targetEl && (
                   <button onClick={captureFrom} style={{ ...captureBtn, marginTop: 4 }}>
@@ -673,8 +675,8 @@ function ActionRow({
             {property === "position" && (
               <>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input type="number" placeholder="X" value={typeof p.to?.x === "number" ? p.to.x : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
-                  <input type="number" placeholder="Y" value={typeof p.to?.y === "number" ? p.to.y : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="X" value={subNum(p.to, "x")} onChange={(e) => setParam("to", { ...asObj(p.to), x: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Y" value={subNum(p.to, "y")} onChange={(e) => setParam("to", { ...asObj(p.to), y: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
                 </div>
                 {targetEl && (
                   <button onClick={captureTo} style={{ ...captureBtn, marginTop: 4 }}>
@@ -686,8 +688,8 @@ function ActionRow({
             {property === "scale" && (
               <>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input type="number" placeholder="Width" value={typeof p.to?.width === "number" ? p.to.width : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
-                  <input type="number" placeholder="Height" value={typeof p.to?.height === "number" ? p.to.height : ""} onChange={(e) => setParam("to", { ...(typeof p.to === "object" ? p.to : {}), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Width" value={subNum(p.to, "width")} onChange={(e) => setParam("to", { ...asObj(p.to), width: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
+                  <input type="number" placeholder="Height" value={subNum(p.to, "height")} onChange={(e) => setParam("to", { ...asObj(p.to), height: Number(e.target.value) })} style={{ ...input, flex: 1 }} />
                 </div>
                 {targetEl && (
                   <button onClick={captureTo} style={{ ...captureBtn, marginTop: 4 }}>
@@ -755,6 +757,22 @@ function ActionRow({
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+
+/**
+ * Action params are `unknown`, but the animate action stores composite values
+ * (e.g. from = { x, y }). These read/spread such a value without unsafe casts.
+ */
+function subNum(v: unknown, key: string): number | "" {
+  if (v && typeof v === "object") {
+    const n = (v as Record<string, unknown>)[key];
+    if (typeof n === "number") return n;
+  }
+  return "";
+}
+
+function asObj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 }
 
 const heading: CSSProperties = {

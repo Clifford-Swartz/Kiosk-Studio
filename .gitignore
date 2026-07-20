@@ -8,3 +8,9 @@ build/
 *.tsbuildinfo
 .env
 .env.local
+
+# Local scratch + large artifacts. GitHub rejects files over 100MB, and packaged
+# app zips are ~100MB+, so keep them out of the repo entirely.
+.playwright-mcp/
+*.zip
+/*.pptx
