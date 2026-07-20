@@ -165,3 +165,11 @@ export function snapResize(
 
   return { rect: { x, y, width, height }, guides };
 }
+
+/**
+ * Snap rotation angle to nearest increment (typically 15°).
+ * Returns snapped angle in degrees.
+ */
+export function snapRotation(angleDeg: number, increment: number = 15): number {
+  return Math.round(angleDeg / increment) * increment;
+}

@@ -61,7 +61,7 @@ export function KioskRuntime({
 
   return (
     <div style={{ position: "absolute", inset: 0, background: "#000", cursor: cursorVisible ? "default" : "none" }}>
-      <Player key={resetKey} project={project} assetBaseUrl={projectAssetBase(filePath)} />
+      <Player key={resetKey} project={project} assetBaseUrl={projectAssetBase(filePath)} hideAudioIcons={true} />
     </div>
   );
 }

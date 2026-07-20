@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Player, parseProject } from "@kiosk/engine";
 import { EditorShell } from "./editor/EditorShell.js";
 import { useEditor } from "./editor/store.js";
-import { projectAssetBase } from "./editor/assets.js";
+import { projectAssetBase, getAppRootCached } from "./editor/assets.js";
 import { useLiveSession } from "./editor/liveSession.js";
 import { KioskRuntime } from "./kiosk/KioskRuntime.js";
 import { buildProjectFromDeck, type ParsedDeck } from "./editor/pptxImport.js";
@@ -26,6 +26,20 @@ export function App() {
   const loadProject = useEditor((s) => s.loadProject);
   const markSaved = useEditor((s) => s.markSaved);
 
+  // Validate the in-memory project before handing it to the Player/KioskRuntime;
+  // this is exactly the round-trip a saved file would go through. Memoized on
+  // `project` so unrelated App re-renders don't manufacture a new object
+  // reference each time — the Player treats project identity changes as scene
+  // updates, which would otherwise reset live interaction state (e.g. active
+  // scene states) on every re-render.
+  const validatedProject = useMemo(() => {
+    try {
+      return { project: parseProject(JSON.parse(JSON.stringify(project))), error: null as string | null };
+    } catch (err) {
+      return { project: null, error: String(err) };
+    }
+  }, [project]);
+
   // Test hooks: expose live project + load/addImage actions for the Playwright
   // scripts (drive flows without native dialogs). Harmless in prod.
   useEffect(() => {
@@ -46,11 +60,14 @@ export function App() {
 
   // On first run: if launched with --kiosk, load that project and go straight to
   // the fullscreen kiosk runtime. Otherwise load the bundled example into the
-  // editor store.
+  // editor store. Also warm the app root cache for user-content/ asset resolution.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        // Warm app root cache early for unsaved project asset resolution
+        getAppRootCached();
+
         const info = await window.kiosk.getKioskInfo();
         const path = info.kiosk ? info.projectPath ?? undefined : undefined;
         const text = await window.kiosk.loadProject(path);
@@ -98,6 +115,56 @@ export function App() {
       if (path) markSaved(path);
     } catch (err) {
       window.alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleSaveAs() {
+    try {
+      // Clone project and strip sentinel values before saving
+      const normalized = JSON.parse(JSON.stringify(project));
+
+      for (const scene of normalized.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && element.props.src === "__placeholder__") {
+            element.props.src = ""; // Save as empty, not sentinel
+          }
+        }
+      }
+
+      const text = JSON.stringify(normalized, null, 2);
+      // Always pass undefined to force the save dialog
+      const path = await window.kiosk.saveProject(text, undefined);
+      if (path) markSaved(path);
+    } catch (err) {
+      window.alert(`Save As failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleExport() {
+    try {
+      if (!filePath) {
+        window.alert("Please save the project before exporting.");
+        return;
+      }
+
+      // Strip sentinel values before exporting
+      const normalized = JSON.parse(JSON.stringify(project));
+      for (const scene of normalized.scenes) {
+        for (const element of scene.elements) {
+          if (element.type === "image" && element.props.src === "__placeholder__") {
+            element.props.src = "";
+          }
+        }
+      }
+
+      const text = JSON.stringify(normalized, null, 2);
+      const exportedPath = await window.kiosk.exportProject(filePath, text);
+
+      if (exportedPath) {
+        console.log(`Exported to: ${exportedPath}`);
+      }
+    } catch (err) {
+      window.alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -160,23 +227,15 @@ export function App() {
   if (loadError) return <Centered text={`Failed to load project:\n${loadError}`} error />;
 
   if (mode === "kiosk") {
-    let validated;
-    try {
-      validated = parseProject(JSON.parse(JSON.stringify(project)));
-    } catch (err) {
-      return <Centered text={`Invalid project:\n${String(err)}`} error />;
+    if (!validatedProject.project) {
+      return <Centered text={`Invalid project:\n${validatedProject.error}`} error />;
     }
-    return <KioskRuntime project={validated} filePath={filePath} onExit={exitKiosk} />;
+    return <KioskRuntime project={validatedProject.project} filePath={filePath} onExit={exitKiosk} />;
   }
 
   if (mode === "player") {
-    // Validate the in-memory project before handing it to the Player; this is
-    // exactly the round-trip a saved file would go through.
-    let validated;
-    try {
-      validated = parseProject(JSON.parse(JSON.stringify(project)));
-    } catch (err) {
-      return <Centered text={`Invalid project:\n${String(err)}`} error />;
+    if (!validatedProject.project) {
+      return <Centered text={`Invalid project:\n${validatedProject.error}`} error />;
     }
 
     const handleExitPlayer = () => {
@@ -191,7 +250,7 @@ export function App() {
 
     return (
       <div style={{ position: "absolute", inset: 0 }}>
-        <Player project={validated} assetBaseUrl={projectAssetBase(filePath)} />
+        <Player project={validatedProject.project} assetBaseUrl={projectAssetBase(filePath)} hideAudioIcons={true} />
         <button onClick={handleExitPlayer} style={backToEditor}>
           ✕ Exit preview
         </button>
@@ -204,8 +263,10 @@ export function App() {
       onPlay={() => setMode("player")}
       onKiosk={handleKiosk}
       onSave={handleSave}
+      onSaveAs={handleSaveAs}
       onOpen={handleOpen}
       onImportPptx={handleImportPptx}
+      onExport={handleExport}
     />
   );
 }

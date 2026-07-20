@@ -23,7 +23,7 @@ export const ElementTypeSchema = z.enum([
   "video",
   "audio",
   "button",
-  "group",
+  "layer",
   "collection",
 ]);
 
@@ -33,25 +33,170 @@ export const TriggerKindSchema = z.enum([
   "release",
   "enterScene",
   "dataChanged",
+  "hover",
+  "hoverEnd",
 ]);
 
 export const ActionTypeSchema = z.enum([
   "goToScene",
+  "goBack",
   "setProp",
   "toggle",
   "playMedia",
   "sendData",
   "animate",
+  "setState",
+  "togglePlayPause",
+  "seekVideo",
+  "setVolume",
+  "setSpeed",
 ]);
 
-export const DataSourceKindSchema = z.enum([
-  "file",
-  "rest",
-  "mqtt",
-  "websocket",
-  "serial",
-  "ble",
+// ---------------------------------------------------------------------------
+// Data Connectors (bidirectional: input sources + output sinks)
+// ---------------------------------------------------------------------------
+
+/** Event kinds for analytics sink event filtering */
+export const EventKindSchema = z.enum([
+  "dataChanged",
+  "dataError",
+  "sessionStart",
+  "sessionEnd",
+  "sceneEnter",
+  "sceneExit",
+  "elementTap",
+  "elementHover",
+  "elementPress",
+  "elementRelease",
+  "actionRun",
+  "videoPlay",
+  "videoPause",
+  "videoComplete",
+  "videoSeek",
+  "audioPlay",
+  "audioPause",
+  "audioComplete",
 ]);
+
+/** REST connector (bidirectional: poll IN + POST OUT) */
+export const RestConnectorDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.literal("rest"),
+  input: z
+    .object({
+      enabled: z.boolean().default(true),
+      url: z.string(),
+      intervalMs: z.number().min(250).default(5000),
+    })
+    .optional(),
+  output: z
+    .object({
+      enabled: z.boolean().default(true),
+      url: z.string(),
+      events: z.array(EventKindSchema).default([]),
+      batchSize: z.number().min(1).default(100),
+    })
+    .optional(),
+});
+
+/** CSV export connector (output only) */
+export const CsvConnectorDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.literal("csv"),
+  output: z.object({
+    enabled: z.boolean().default(true),
+    path: z.string(),
+    events: z.array(EventKindSchema).default([]),
+    flushIntervalMs: z.number().min(1000).default(30000),
+    maxBufferSize: z.number().min(1).default(1000),
+    appendMode: z.boolean().default(true),
+  }),
+});
+
+/** JSON export connector (output only) */
+export const JsonConnectorDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.literal("json"),
+  output: z.object({
+    enabled: z.boolean().default(true),
+    path: z.string(),
+    events: z.array(EventKindSchema).default([]),
+    flushIntervalMs: z.number().min(1000).default(30000),
+    maxBufferSize: z.number().min(1).default(1000),
+  }),
+});
+
+/** JSONL export connector (output only) */
+export const JsonlConnectorDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.literal("jsonl"),
+  output: z.object({
+    enabled: z.boolean().default(true),
+    path: z.string(),
+    events: z.array(EventKindSchema).default([]),
+    flushIntervalMs: z.number().min(1000).default(30000),
+    maxBufferSize: z.number().min(1).default(1000),
+    appendMode: z.boolean().default(true),
+  }),
+});
+
+/** Console logging connector (output only, DevTools) */
+export const ConsoleConnectorDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.literal("console"),
+  output: z.object({
+    enabled: z.boolean().default(true),
+    events: z.array(EventKindSchema).default([]),
+    format: z.enum(["table", "json", "compact"]).default("compact"),
+    maxEvents: z.number().min(1).default(100),
+  }),
+});
+
+/** Unified data connector (discriminated union) */
+export const DataConnectorDefSchema = z.discriminatedUnion("kind", [
+  RestConnectorDefSchema,
+  CsvConnectorDefSchema,
+  JsonConnectorDefSchema,
+  JsonlConnectorDefSchema,
+  ConsoleConnectorDefSchema,
+]);
+
+export const LayerTintSchema = z.object({
+  color: z.string(),
+  opacity: z.number().min(0).max(1),
+});
+
+export const LayerMaskSchema = z.object({
+  type: z.enum(["rect", "polygon"]),
+  points: z.array(z.tuple([z.number(), z.number()])),
+});
+
+export const TransitionTypeSchema = z.enum([
+  "none",
+  "fade",
+  "slide",
+  "push",
+  "zoom",
+]);
+
+export const TransitionDirectionSchema = z.enum([
+  "up",
+  "down",
+  "left",
+  "right",
+]);
+
+export const TransitionSchema = z.object({
+  type: TransitionTypeSchema.default("none"),
+  direction: TransitionDirectionSchema.optional(),
+  duration: z.number().min(0).max(5000).default(300),
+  elementsOnly: z.boolean().default(false),
+});
 
 // ---------------------------------------------------------------------------
 // Interactions & bindings
@@ -99,6 +244,9 @@ export interface ElementShape {
   props: Record<string, unknown>;
   bindings: z.infer<typeof BindingSchema>[];
   interactions: z.infer<typeof InteractionSchema>[];
+  tint?: z.infer<typeof LayerTintSchema>;
+  mask?: z.infer<typeof LayerMaskSchema>;
+  locked?: boolean;
   children?: ElementShape[];
 }
 
@@ -121,6 +269,9 @@ export interface ElementInput {
   props?: Record<string, unknown>;
   bindings?: z.input<typeof BindingSchema>[];
   interactions?: z.input<typeof InteractionSchema>[];
+  tint?: z.input<typeof LayerTintSchema>;
+  mask?: z.input<typeof LayerMaskSchema>;
+  locked?: boolean;
   children?: ElementInput[];
 }
 
@@ -139,6 +290,9 @@ export const ElementSchema: z.ZodType<ElementShape, z.ZodTypeDef, ElementInput> 
     props: z.record(z.unknown()).default({}),
     bindings: z.array(BindingSchema).default([]),
     interactions: z.array(InteractionSchema).default([]),
+    tint: LayerTintSchema.optional(),
+    mask: LayerMaskSchema.optional(),
+    locked: z.boolean().default(false),
     children: z.array(ElementSchema).optional(),
   })
 );
@@ -146,6 +300,17 @@ export const ElementSchema: z.ZodType<ElementShape, z.ZodTypeDef, ElementInput> 
 // ---------------------------------------------------------------------------
 // Scene, data sources, project
 // ---------------------------------------------------------------------------
+
+/** Element overrides for a scene state */
+export const StateElementOverrideSchema = z.object({
+  visible: z.boolean().optional(),
+  props: z.record(z.unknown()).optional(),
+});
+
+/** Named scene state (visibility + property overrides per element) */
+export const SceneStateSchema = z.object({
+  elements: z.record(StateElementOverrideSchema).default({}),
+});
 
 export const SceneSchema = z.object({
   id: z.string(),
@@ -155,20 +320,20 @@ export const SceneSchema = z.object({
   width: z.number().optional(),
   height: z.number().optional(),
   background: z.string().default("#000000"),
+  backgroundSize: z.enum(["cover", "contain", "fill"]).optional(),
+  backgroundPosition: z.string().optional(),
+  transition: TransitionSchema.optional(),
   elements: z.array(ElementSchema).default([]),
-});
-
-export const DataSourceDefSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  kind: DataSourceKindSchema,
-  /** Connector-specific config (url, topic, port, baud, etc.). */
-  config: z.record(z.unknown()).default({}),
+  /** Named scene states (visibility + property overrides). See ADR 0011. */
+  states: z.record(SceneStateSchema).refine(
+    (states) => !states || !("default" in states),
+    { message: "State name 'default' is reserved" }
+  ).optional(),
 });
 
 export const ProjectSchema = z.object({
-  /** Schema version, so we can migrate project files later. */
-  schemaVersion: z.literal(1).default(1),
+  /** Schema version 3: layer system (replaces group, adds tint/mask/locked). */
+  schemaVersion: z.literal(3).default(3),
   id: z.string(),
   name: z.string(),
   /** Canvas size for the whole project (one size for all scenes — a kiosk has one screen). */
@@ -177,17 +342,69 @@ export const ProjectSchema = z.object({
   /** Id of the scene the Player opens first. Defaults to the first scene. */
   startSceneId: z.string().optional(),
   scenes: z.array(SceneSchema).min(1),
-  dataSources: z.array(DataSourceDefSchema).default([]),
+  /** Bidirectional data connectors (input sources + output sinks). */
+  dataConnectors: z.array(DataConnectorDefSchema).default([]),
+  /** Enable back button in Play/Kiosk mode (project-level navigation UI). */
+  enableBackButton: z.boolean().default(false),
+  /** Enable home button in Play/Kiosk mode (project-level navigation UI). */
+  enableHomeButton: z.boolean().default(false),
+  /** Export marker: true = bundled with assets in project assets/, false/undefined = working project referencing shared user-content/. */
+  exported: z.boolean().optional(),
 });
 
 /**
  * Parse and validate an unknown value as a Project, applying defaults. Migrates
  * older files where size lived on the scene: if the project has no width/height,
  * adopt the first scene's size before validating.
+ *
+ * V1 → V2 migration: if schemaVersion is 1 or missing, upgrade to 2 and convert
+ * dataSources → dataConnectors.
+ *
+ * V2 → V3 migration: upgrade to 3 and convert group → layer elements.
  */
 export function parseProject(input: unknown) {
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
+
+    // Migrate schemaVersion 1 → 2
+    const version = o.schemaVersion as number | undefined;
+    if (version === undefined || version === 1) {
+      o.schemaVersion = 2;
+
+      // V1 had dataSources (REST polling only), V2 has dataConnectors (bidirectional)
+      // If old dataSources exist, convert to REST input connectors
+      const oldSources = o.dataSources as Array<{ id: string; name: string; url: string; intervalMs: number }> | undefined;
+      if (oldSources) {
+        o.dataConnectors = oldSources.map((src) => ({
+          id: src.id,
+          name: src.name,
+          kind: "rest",
+          input: {
+            enabled: true,
+            url: src.url,
+            intervalMs: src.intervalMs,
+          },
+        }));
+        delete o.dataSources;
+      }
+    }
+
+    // Migrate schemaVersion 2 → 3
+    if (o.schemaVersion === 2) {
+      o.schemaVersion = 3;
+
+      // Convert group elements to layer elements recursively
+      const scenes = o.scenes as Array<{ elements?: unknown[] }> | undefined;
+      if (scenes) {
+        for (const scene of scenes) {
+          if (scene.elements) {
+            scene.elements = migrateGroupsToLayers(scene.elements);
+          }
+        }
+      }
+    }
+
+    // Adopt scene size if project has no width/height
     if (o.width === undefined || o.height === undefined) {
       const scenes = o.scenes as Array<Record<string, unknown>> | undefined;
       const first = scenes?.[0];
@@ -198,4 +415,31 @@ export function parseProject(input: unknown) {
     }
   }
   return ProjectSchema.parse(input);
+}
+
+/**
+ * Recursively convert all type="group" elements to type="layer" with default
+ * layer properties.
+ */
+function migrateGroupsToLayers(elements: unknown[]): unknown[] {
+  return elements.map((el) => {
+    if (el && typeof el === "object") {
+      const element = el as Record<string, unknown>;
+
+      // Convert group → layer
+      if (element.type === "group") {
+        element.type = "layer";
+        // Add default layer properties if not present
+        if (element.tint === undefined) element.tint = undefined;
+        if (element.mask === undefined) element.mask = undefined;
+        if (element.locked === undefined) element.locked = false;
+      }
+
+      // Recurse into children
+      if (Array.isArray(element.children)) {
+        element.children = migrateGroupsToLayers(element.children);
+      }
+    }
+    return el;
+  });
 }

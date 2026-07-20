@@ -19,11 +19,22 @@ export type { PlayerProps } from "./render/Player.js";
 // Runtime: interaction execution + live overrides.
 export { runInteraction } from "./runtime/interactions.js";
 export type { PlayerContext } from "./runtime/interactions.js";
+
+// Events: central event bus for all kiosk system events.
+export { eventBus } from "./events/EventBus.js";
+export type { KioskEvent, EventKind, EventListener, Unsubscribe } from "./events/events.js";
+
+// Analytics: event buffering and export (CSV, JSON, REST, console).
+export { analyticsStore } from "./analytics/AnalyticsStore.js";
+
+// Element resolution: unified bindings + overrides pipeline.
+export { elementResolver, bindingHost, overrideHost } from "./data/ElementResolver.js";
+export type { ElementResolver, BindingHost, OverrideHost } from "./data/ElementResolver.js";
+
+// DEPRECATED: Use elementResolver instead (consolidated interface).
+// These will be removed in a future version.
+export { bindingContext } from "./data/BindingContext.js";
+export type { BindingContext } from "./data/BindingContext.js";
 export { overrideStore, OverrideStore } from "./runtime/overrideStore.js";
 export { applyOverrides } from "./runtime/applyOverrides.js";
 export { useOverrides } from "./runtime/useOverrides.js";
-
-// Data binding: live values from connectors -> element props.
-export { bindingStore, BindingStore } from "./data/bindingStore.js";
-export { resolveBindings } from "./data/applyBindings.js";
-export { useBindingValues } from "./data/useBindings.js";

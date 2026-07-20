@@ -1,31 +1,47 @@
 import { useEffect } from "react";
-import { bindingStore } from "@kiosk/engine";
+import { eventBus, isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 
 /**
- * Runs a live data session: starts connectors for the project's data sources
- * (via IPC to the main process) and pipes pushed values into the engine's
- * bindingStore so bound elements update. Re-starts whenever the set of sources
- * or their configs change. Used by both the editor (canvas preview) and player.
+ * Runs a live data session: starts connectors for the project's data connectors
+ * (via IPC to the main process) and bridges IPC events to the EventBus.
+ * Re-starts whenever the set of connectors or their configs change.
+ * Used by both the editor (canvas preview) and player.
  */
 export function useLiveSession(): void {
-  const dataSources = useEditor((s) => s.project.dataSources);
+  const dataConnectors = useEditor((s) => s.project.dataConnectors || []);
+  // Filter to input-enabled connectors for IPC startData
+  const inputSources = dataConnectors.filter(isRestConnector).filter((c) => c.input?.enabled);
   // Re-run when the sources' identity/config changes (stringify is fine — small).
-  const key = JSON.stringify(dataSources.map((d) => ({ id: d.id, kind: d.kind, config: d.config })));
+  const key = JSON.stringify(inputSources.map((c) => ({ id: c.id, kind: c.kind, url: c.input!.url, intervalMs: c.input!.intervalMs })));
 
   useEffect(() => {
-    const unsub = window.kiosk.onDataValue((v) => bindingStore.setValue(v.sourceId, v.value));
-    if (dataSources.length > 0) {
+    // Bridge IPC events to EventBus
+    const unsub = window.kiosk.onEvent((event) => {
+      eventBus.emit({
+        kind: event.kind as any,
+        payload: event.payload,
+        timestamp: event.timestamp,
+        sessionId: event.sessionId,
+        sceneId: event.sceneId
+      });
+    });
+
+    if (inputSources.length > 0) {
       void window.kiosk.startData(
-        dataSources.map((d) => ({ id: d.id, kind: d.kind, config: d.config }))
+        inputSources.map((c) => ({
+          id: c.id,
+          kind: c.kind,
+          config: { url: c.input!.url, intervalMs: c.input!.intervalMs },
+        }))
       );
     } else {
       void window.kiosk.stopData();
     }
+
     return () => {
       unsub();
       void window.kiosk.stopData();
-      bindingStore.reset();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

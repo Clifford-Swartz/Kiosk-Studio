@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, webContents, screen, Menu } from "electron";
 import { getConnectorFactory, type Connector, type ConnectorValue, type SourceSpec } from "@kiosk/connectors";
 import { parsePptx } from "@kiosk/pptx";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, createReadStream } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { readFile, writeFile, mkdir, appendFile, readdir, stat } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { Readable } from "node:stream";
 
 /**
  * Custom protocol for serving project assets. Using file:// directly fails in
@@ -50,6 +51,181 @@ function defaultProjectPath(): string {
   // Dev: out/main/index.js -> repo root is four levels up.
   const repoRoot = resolve(__dirname, "..", "..", "..", "..");
   return join(repoRoot, "examples", "hello.kproj", "project.json");
+}
+
+/**
+ * Get app root directory. Packaged: dirname(process.execPath). Dev: repo root.
+ */
+function getAppRoot(): string {
+  return app.isPackaged
+    ? dirname(process.execPath)
+    : resolve(__dirname, "..", "..", "..", "..");
+}
+
+/**
+ * Get shared user-content folder path at app root.
+ */
+function getSharedUserContentPath(): string {
+  return join(getAppRoot(), "user-content");
+}
+
+/**
+ * Get Exports folder where projects are stored.
+ */
+function getExportsPath(): string {
+  return join(getAppRoot(), "Exports");
+}
+
+/**
+ * Read project.json and extract exported flag.
+ * Returns false if file not found or parsing fails.
+ */
+async function isProjectExported(projectDir: string): Promise<boolean> {
+  try {
+    const projectJsonPath = join(projectDir, "project.json");
+    const text = await readFile(projectJsonPath, "utf8");
+    const parsed = JSON.parse(text);
+    return parsed.exported === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Scene.states shape (ADR 0011): named states override element props, incl. media src. */
+type SceneStates = Record<string, { elements?: Record<string, { props?: Record<string, unknown> }> }>;
+
+/**
+ * Rewrite asset paths for export: "user-content/file" → "assets/file"
+ */
+function rewritePathsForExport(projectObj: Record<string, unknown>): void {
+  const scenes = projectObj.scenes as
+    | Array<{ background?: unknown; elements: unknown[]; states?: SceneStates }>
+    | undefined;
+  if (!scenes) return;
+
+  const rewritePath = (path: unknown): unknown => {
+    if (typeof path !== "string") return path;
+    if (path.startsWith("user-content/")) {
+      return path.replace(/^user-content\//, "assets/");
+    }
+    return path;
+  };
+
+  // Shared by element base props and state-override props (ADR 0011: state
+  // overrides can set props.src/imageSrc, which reference media the same way
+  // base element props do).
+  const rewritePropsInPlace = (props: Record<string, unknown>): void => {
+    if (props.src) props.src = rewritePath(props.src);
+    if (props.background) props.background = rewritePath(props.background);
+    if (props.imageSrc) props.imageSrc = rewritePath(props.imageSrc);
+
+    // Collection items: rewrite image + thumbnail paths
+    if (Array.isArray(props.items)) {
+      for (const item of props.items) {
+        if (item && typeof item === "object") {
+          const i = item as Record<string, unknown>;
+          if (i.image) i.image = rewritePath(i.image);
+          if (i.thumbnail) i.thumbnail = rewritePath(i.thumbnail);
+        }
+      }
+    }
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      rewritePropsInPlace(el.props as Record<string, unknown>);
+    }
+    if (el.children && Array.isArray(el.children)) {
+      el.children.forEach(processElement);
+    }
+  };
+
+  for (const scene of scenes) {
+    // Rewrite scene background
+    if (scene.background) {
+      scene.background = rewritePath(scene.background);
+    }
+    // Rewrite element paths
+    if (scene.elements) {
+      scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
+    }
+    // Rewrite state override paths
+    if (scene.states) {
+      for (const state of Object.values(scene.states)) {
+        if (!state.elements) continue;
+        for (const override of Object.values(state.elements)) {
+          if (override.props) rewritePropsInPlace(override.props);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Collect all user-content file references from project.
+ * Returns array of filenames (not full paths).
+ */
+function collectUserContentRefs(projectObj: Record<string, unknown>): string[] {
+  const refs = new Set<string>();
+  const scenes = projectObj.scenes as
+    | Array<{ background?: unknown; elements: unknown[]; states?: SceneStates }>
+    | undefined;
+  if (!scenes) return [];
+
+  const extractPath = (path: unknown): void => {
+    if (typeof path === "string" && path.startsWith("user-content/")) {
+      refs.add(basename(path));
+    }
+  };
+
+  // Shared by element base props and state-override props (ADR 0011).
+  const extractFromProps = (props: Record<string, unknown>): void => {
+    if (props.src) extractPath(props.src);
+    if (props.background) extractPath(props.background);
+    if (props.imageSrc) extractPath(props.imageSrc);
+
+    // Collection items: scan image + thumbnail fields
+    if (Array.isArray(props.items)) {
+      for (const item of props.items) {
+        if (item && typeof item === "object") {
+          const i = item as Record<string, unknown>;
+          if (i.image) extractPath(i.image);
+          if (i.thumbnail) extractPath(i.thumbnail);
+        }
+      }
+    }
+  };
+
+  const processElement = (el: Record<string, unknown>): void => {
+    if (el.props && typeof el.props === "object") {
+      extractFromProps(el.props as Record<string, unknown>);
+    }
+    if (el.children && Array.isArray(el.children)) {
+      el.children.forEach(processElement);
+    }
+  };
+
+  for (const scene of scenes) {
+    // Extract scene background
+    if (scene.background) {
+      extractPath(scene.background);
+    }
+    // Extract element paths
+    if (scene.elements) {
+      scene.elements.forEach((el) => processElement(el as Record<string, unknown>));
+    }
+    // Extract state override paths
+    if (scene.states) {
+      for (const state of Object.values(scene.states)) {
+        if (!state.elements) continue;
+        for (const override of Object.values(state.elements)) {
+          if (override.props) extractFromProps(override.props);
+        }
+      }
+    }
+  }
+
+  return Array.from(refs);
 }
 
 /**
@@ -120,7 +296,7 @@ async function loadProject(_e: unknown, projectPath?: string): Promise<string> {
   // Touch pathToFileURL so asset-relative resolution can be added later.
   void pathToFileURL(path);
   // Ensure user-content folder exists for this project.
-  await ensureUserContentFolder(path).catch(() => {
+  await ensureUserContentFolder().catch(() => {
     /* best effort; if it fails, the user will get an error when trying to add content */
   });
   return text;
@@ -144,7 +320,7 @@ function safeFolderName(name: string): string {
 
 /**
  * Silently establish a workspace folder for a not-yet-saved project so assets
- * have a home — no dialog. Creates Documents/KioskStudio/<name>-<rand>/ with the
+ * have a home — no dialog. Creates Exports/<name>-<rand>.kproj/ with the
  * project.json inside, and returns that path. Used the first time an asset is
  * added; the user can later Save As to relocate.
  */
@@ -153,8 +329,8 @@ async function ensureWorkspace(
   text: string,
   projectName: string
 ): Promise<string> {
-  const base = join(app.getPath("documents"), "KioskStudio");
-  const folder = `${safeFolderName(projectName)}-${randomBytes(3).toString("hex")}`;
+  const base = getExportsPath();
+  const folder = `${safeFolderName(projectName)}-${randomBytes(3).toString("hex")}.kproj`;
   const dir = join(base, folder);
   await mkdir(dir, { recursive: true });
   const path = join(dir, "project.json");
@@ -174,9 +350,12 @@ async function saveProject(
 ): Promise<string | null> {
   let path = projectPath;
   if (!path) {
+    const exportsDir = getExportsPath();
+    await mkdir(exportsDir, { recursive: true });
+
     const result = await dialog.showSaveDialog({
       title: "Save Kiosk project",
-      defaultPath: "project.json",
+      defaultPath: join(exportsDir, "project.json"),
       filters: [{ name: "Kiosk project", extensions: ["json"] }],
     });
     if (result.canceled || !result.filePath) return null;
@@ -186,41 +365,32 @@ async function saveProject(
   return path;
 }
 
-/** Get the absolute path to the user-content folder for a project. */
-function getUserContentFolderPath(projectPath: string): string {
-  return join(dirname(projectPath), "user-content");
-}
-
-/** Ensure the user-content folder exists. */
-async function ensureUserContentFolder(projectPath: string): Promise<string> {
-  const dir = getUserContentFolderPath(projectPath);
+/** Ensure shared user-content folder exists. */
+async function ensureUserContentFolder(): Promise<string> {
+  const dir = getSharedUserContentPath();
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
-/** Check if a file path is inside the user-content folder. */
-function isFileInUserContentFolder(filePath: string, projectPath: string): boolean {
+/** Check if file is inside shared user-content folder. */
+function isFileInUserContentFolder(filePath: string): boolean {
   const resolved = resolve(filePath);
-  const contentDir = resolve(getUserContentFolderPath(projectPath));
+  const contentDir = resolve(getSharedUserContentPath());
   return resolved.startsWith(contentDir + sep);
 }
 
 /**
- * Copy a file to the user-content folder, preserving the original filename.
- * If a file with that name already exists, appends _1, _2, etc. to the filename.
- * Returns the relative path (e.g., "user-content/image.jpg").
+ * Copy file to shared user-content folder with deduplication (append _1, _2, etc.).
+ * Returns relative path: "user-content/filename.ext"
  */
-async function copyToUserContent(
-  projectPath: string,
-  sourcePath: string
-): Promise<string> {
-  const contentDir = await ensureUserContentFolder(projectPath);
-  const fileName = basename(sourcePath);
+async function copyToUserContent(sourcePath: string): Promise<string> {
+  const contentDir = getSharedUserContentPath();
+  await mkdir(contentDir, { recursive: true });
 
+  const fileName = basename(sourcePath);
   let targetPath = join(contentDir, fileName);
   let finalName = fileName;
 
-  // Deduplicate: if file exists, append _1, _2, etc.
   if (await fileExists(targetPath)) {
     const ext = extname(fileName);
     const base = fileName.slice(0, -ext.length);
@@ -234,7 +404,6 @@ async function copyToUserContent(
 
   const buf = await readFile(sourcePath);
   await writeFile(targetPath, buf);
-
   return `user-content/${finalName}`;
 }
 
@@ -251,7 +420,7 @@ async function fileExists(path: string): Promise<boolean> {
 /** Normalize an extension from a filename, defaulting to .png. */
 function imageExt(name: string): string {
   const ext = extname(name).toLowerCase();
-  return /^\.(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(ext) ? ext : ".png";
+  return /^\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|ogg)$/.test(ext) ? ext : ".png";
 }
 
 /**
@@ -275,22 +444,22 @@ async function saveAsset(
 }
 
 /**
- * Show a content picker dialog (image, video, or audio) defaulting to the
- * project's user-content folder. Returns the chosen file's name and relative path,
- * or null if canceled. If the file is outside the user-content folder, copies it in first.
+ * Show content picker dialog defaulting to shared user-content/.
+ * Returns chosen file's name and relative path, or null if canceled.
+ * Copies external files into shared user-content/ first.
  */
 async function pickContent(
   _e: unknown,
-  projectPath: string,
-  type: "image" | "video" | "audio"
+  type: "image" | "video" | "audio" | "media"
 ): Promise<{ name: string; path: string } | null> {
   const filterMap: Record<string, string[]> = {
     image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
     video: ["mp4", "webm"],
     audio: ["mp3", "wav", "ogg"],
+    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm"],
   };
 
-  const contentDir = getUserContentFolderPath(projectPath);
+  const contentDir = getSharedUserContentPath();
   const result = await dialog.showOpenDialog({
     title: `Choose ${type}`,
     defaultPath: contentDir,
@@ -303,13 +472,11 @@ async function pickContent(
   const filePath = result.filePaths[0]!;
   const fileName = basename(filePath);
 
-  // If file is already in the user-content folder, use it directly.
-  if (isFileInUserContentFolder(filePath, projectPath)) {
+  if (isFileInUserContentFolder(filePath)) {
     return { name: fileName, path: `user-content/${fileName}` };
   }
 
-  // Otherwise, copy it to user-content folder.
-  const relativePath = await copyToUserContent(projectPath, filePath);
+  const relativePath = await copyToUserContent(filePath);
   return { name: fileName, path: relativePath };
 }
 
@@ -319,13 +486,12 @@ async function pickContent(
  */
 async function copyExternalFile(
   _e: unknown,
-  projectPath: string,
   externalFilePath: string
 ): Promise<string> {
-  if (isFileInUserContentFolder(externalFilePath, projectPath)) {
+  if (isFileInUserContentFolder(externalFilePath)) {
     return `user-content/${basename(externalFilePath)}`;
   }
-  return copyToUserContent(projectPath, externalFilePath);
+  return copyToUserContent(externalFilePath);
 }
 
 /**
@@ -334,9 +500,13 @@ async function copyExternalFile(
  */
 async function pickImage(): Promise<{ name: string; base64: string } | null> {
   const result = await dialog.showOpenDialog({
-    title: "Choose image",
+    title: "Choose media (image or video)",
     properties: ["openFile"],
-    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] }],
+    filters: [
+      { name: "Images & Videos", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm", "mov", "ogg"] },
+      { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] },
+      { name: "Videos", extensions: ["mp4", "webm", "mov", "ogg"] },
+    ],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const filePath = result.filePaths[0]!;
@@ -371,6 +541,179 @@ async function importPptx(): Promise<unknown | null> {
   };
 }
 
+/**
+ * Export project: create {name}-exported.kproj/ with bundled assets.
+ * Returns exported project path, or null if canceled.
+ */
+async function exportProject(
+  _e: unknown,
+  projectPath: string,
+  projectText: string
+): Promise<string | null> {
+  try {
+    const projectDir = dirname(projectPath);
+    const projectObj = JSON.parse(projectText);
+    const projectName = projectObj.name || "Untitled";
+
+    // Generate export folder name
+    const safeName = safeFolderName(projectName);
+    let exportFolderName = `${safeName}-exported.kproj`;
+    let exportDir = join(projectDir, "..", exportFolderName);
+
+    // Check if export exists
+    if (await fileExists(join(exportDir, "project.json"))) {
+      const result = await dialog.showMessageBox({
+        type: "question",
+        title: "Export Exists",
+        message: `Export "${exportFolderName}" already exists.`,
+        buttons: ["Overwrite", "Rename", "Cancel"],
+        defaultId: 1,
+        cancelId: 2,
+      });
+
+      if (result.response === 2) return null;
+
+      if (result.response === 1) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        exportFolderName = `${safeName}-exported-${timestamp}.kproj`;
+        exportDir = join(projectDir, "..", exportFolderName);
+      }
+    }
+
+    // Create export directory
+    await mkdir(exportDir, { recursive: true });
+    const exportAssetsDir = join(exportDir, "assets");
+    await mkdir(exportAssetsDir, { recursive: true });
+
+    // Copy placeholders from project assets/
+    const projectAssetsDir = join(projectDir, "assets");
+    if (await fileExists(projectAssetsDir)) {
+      const placeholderFiles = await readdir(projectAssetsDir);
+      for (const file of placeholderFiles) {
+        const buf = await readFile(join(projectAssetsDir, file));
+        await writeFile(join(exportAssetsDir, file), buf);
+      }
+    }
+
+    // Collect user-content references
+    const userContentRefs = collectUserContentRefs(projectObj);
+    const sharedUserContent = getSharedUserContentPath();
+
+    // Copy user-content files to export assets/ with deduplication
+    const copiedFiles = new Map<string, string>();
+    for (const filename of userContentRefs) {
+      const srcPath = join(sharedUserContent, filename);
+      if (!(await fileExists(srcPath))) {
+        console.warn(`[export] user-content file not found: ${filename}`);
+        continue;
+      }
+
+      let destFilename = filename;
+      let destPath = join(exportAssetsDir, destFilename);
+
+      // Deduplicate if collision
+      if (await fileExists(destPath)) {
+        const ext = extname(filename);
+        const base = filename.slice(0, -ext.length);
+        let i = 1;
+        while (await fileExists(join(exportAssetsDir, `${base}_${i}${ext}`))) {
+          i++;
+        }
+        destFilename = `${base}_${i}${ext}`;
+        destPath = join(exportAssetsDir, destFilename);
+      }
+
+      const buf = await readFile(srcPath);
+      await writeFile(destPath, buf);
+      copiedFiles.set(filename, destFilename);
+    }
+
+    // Rewrite paths
+    rewritePathsForExport(projectObj);
+    projectObj.exported = true;
+
+    // Handle deduplication remapping
+    for (const [original, renamed] of copiedFiles.entries()) {
+      if (original !== renamed) {
+        const scenes = projectObj.scenes as Array<{
+          background?: unknown;
+          elements: unknown[];
+          states?: SceneStates;
+        }>;
+        const remapProps = (props: Record<string, unknown>): void => {
+          if (props.src === `assets/${original}`) props.src = `assets/${renamed}`;
+          if (props.background === `assets/${original}`) props.background = `assets/${renamed}`;
+          if (props.imageSrc === `assets/${original}`) props.imageSrc = `assets/${renamed}`;
+        };
+        const replaceInElement = (el: Record<string, unknown>): void => {
+          if (el.props && typeof el.props === "object") {
+            remapProps(el.props as Record<string, unknown>);
+          }
+          if (el.children && Array.isArray(el.children)) {
+            el.children.forEach(replaceInElement);
+          }
+        };
+        for (const scene of scenes) {
+          // Replace scene background
+          if (scene.background === `assets/${original}`) {
+            scene.background = `assets/${renamed}`;
+          }
+          // Replace element paths
+          if (scene.elements) {
+            scene.elements.forEach((el) => replaceInElement(el as Record<string, unknown>));
+          }
+          // Replace state override paths
+          if (scene.states) {
+            for (const state of Object.values(scene.states)) {
+              if (!state.elements) continue;
+              for (const override of Object.values(state.elements)) {
+                if (override.props) remapProps(override.props);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Write exported project.json
+    const exportProjectPath = join(exportDir, "project.json");
+    await writeFile(exportProjectPath, JSON.stringify(projectObj, null, 2), "utf8");
+
+    // Show success message
+    await dialog.showMessageBox({
+      type: "info",
+      title: "Export Complete",
+      message: `Project exported successfully!`,
+      detail: `Location: ${exportDir}\n\nThe exported project is ready to share or deploy.`,
+      buttons: ["Open Folder", "OK"],
+      defaultId: 0,
+    }).then((result) => {
+      if (result.response === 0) {
+        import("node:child_process").then((cp) => {
+          if (process.platform === "win32") {
+            cp.exec(`explorer "${exportDir}"`);
+          } else if (process.platform === "darwin") {
+            cp.exec(`open "${exportDir}"`);
+          } else {
+            cp.exec(`xdg-open "${exportDir}"`);
+          }
+        });
+      }
+    });
+
+    return exportProjectPath;
+  } catch (err) {
+    console.error("[export] Failed:", err);
+    await dialog.showMessageBox({
+      type: "error",
+      title: "Export Failed",
+      message: `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      buttons: ["OK"],
+    });
+    return null;
+  }
+}
+
 // --- Connector host -------------------------------------------------------
 // Runs one connector per active data source (in this Node process) and forwards
 // each emitted value to the renderer that requested the live session. Only one
@@ -391,7 +734,26 @@ async function startData(e: Electron.IpcMainInvokeEvent, sources: SourceSpec[]):
   liveWebContentsId = e.sender.id;
   const emit = (v: ConnectorValue) => {
     const wc = liveWebContentsId != null ? webContents.fromId(liveWebContentsId) : null;
-    if (wc && !wc.isDestroyed()) wc.send("data:value", v);
+    if (wc && !wc.isDestroyed()) {
+      // Check if value contains an error (connectors emit { __error: message })
+      const isError = v.value != null && typeof v.value === "object" && "__error" in v.value;
+
+      if (isError) {
+        // Emit dataError event
+        wc.send("event:emit", {
+          kind: "dataError",
+          payload: { sourceId: v.sourceId, error: (v.value as { __error: string }).__error },
+          timestamp: v.at
+        });
+      } else {
+        // Emit dataChanged event
+        wc.send("event:emit", {
+          kind: "dataChanged",
+          payload: { sourceId: v.sourceId, value: v.value },
+          timestamp: v.at
+        });
+      }
+    }
   };
   for (const spec of sources) {
     const factory = getConnectorFactory(spec.kind);
@@ -400,26 +762,151 @@ async function startData(e: Electron.IpcMainInvokeEvent, sources: SourceSpec[]):
     activeConnectors.push(conn);
     try {
       await conn.start();
-    } catch {
-      /* a bad source shouldn't kill the session */
+    } catch (err) {
+      // Emit dataError event for startup failures
+      const wc = liveWebContentsId != null ? webContents.fromId(liveWebContentsId) : null;
+      if (wc && !wc.isDestroyed()) {
+        wc.send("event:emit", {
+          kind: "dataError",
+          payload: {
+            sourceId: spec.id,
+            error: err instanceof Error ? err.message : String(err)
+          },
+          timestamp: Date.now()
+        });
+      }
     }
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // No default application menu — the editor has its own TopBar and a kiosk
   // must show no chrome. This removes the File/Edit/View/Window/Help bar.
   Menu.setApplicationMenu(null);
 
-  // Serve project assets via the privileged scheme. The pathname is a
-  // uri-encoded absolute file path; stream it back. Constrain to existing
-  // files only (net.fetch of a file URL handles missing files as errors).
-  protocol.handle(ASSET_SCHEME, (request) => {
+  // Ensure Exports/ and shared user-content/ exist
+  await mkdir(getExportsPath(), { recursive: true });
+  await mkdir(getSharedUserContentPath(), { recursive: true });
+
+  // Serve project assets via the privileged scheme. Resolves paths based on
+  // exported flag for working vs bundled projects.
+  protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
-    // kioskasset://load/<encoded-abs-path>  -> decode the path after the host.
-    const encoded = url.pathname.replace(/^\/+/, "");
-    const absPath = normalize(decodeURIComponent(encoded));
-    return net.fetch(pathToFileURL(absPath).toString());
+    // kioskasset://load/<encoded-project-dir>/<relative-path>
+    const fullPath = url.pathname.replace(/^\/+/, "");
+    const decoded = decodeURIComponent(fullPath);
+
+    console.log(`[${ASSET_SCHEME}] Request: ${request.url}`);
+    console.log(`[${ASSET_SCHEME}] Decoded: ${decoded}`);
+
+    // Parse project directory and relative path
+    // Look for .kproj/ boundary
+    const kprojMatch = decoded.match(/^(.+\.kproj)[/\\](.+)$/);
+
+    let absPath: string;
+
+    if (!kprojMatch) {
+      // Fallback: no .kproj boundary found
+      // Check if path contains user-content/ or assets/ segment
+      const userContentIndex = decoded.indexOf("user-content/");
+      const assetsIndex = decoded.indexOf("assets/");
+
+      if (userContentIndex >= 0) {
+        // Extract relative path from user-content/ onwards
+        const relativePath = decoded.slice(userContentIndex);
+        absPath = normalize(join(getAppRoot(), relativePath));
+        console.log(`[${ASSET_SCHEME}] Fallback user-content: ${relativePath} → ${absPath}`);
+      } else if (assetsIndex >= 0) {
+        // Extract relative path from assets/ onwards
+        const relativePath = decoded.slice(assetsIndex);
+        absPath = normalize(join(getAppRoot(), relativePath));
+        console.log(`[${ASSET_SCHEME}] Fallback assets: ${relativePath} → ${absPath}`);
+      } else {
+        // No known prefix → treat as absolute path
+        absPath = normalize(decoded);
+      }
+    } else {
+      const projectDir = kprojMatch[1];
+      const relativePath = kprojMatch[2];
+
+      console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
+      console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
+
+      const exported = await isProjectExported(projectDir);
+      console.log(`[${ASSET_SCHEME}] Exported: ${exported}`);
+
+      // Resolve based on exported flag and path prefix
+      if (relativePath.startsWith("user-content/")) {
+        if (exported) {
+          // Exported: user-content refs should have been rewritten to assets/
+          absPath = normalize(join(projectDir, "assets", basename(relativePath)));
+          console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
+        } else {
+          // Working: resolve user-content/ from app root
+          absPath = normalize(join(getAppRoot(), relativePath));
+        }
+      } else if (relativePath.startsWith("assets/")) {
+        // Both: assets/ resolves from project dir
+        absPath = normalize(join(projectDir, relativePath));
+      } else {
+        // No prefix: absolute path fallback
+        absPath = normalize(decoded);
+      }
+    }
+
+    console.log(`[${ASSET_SCHEME}] Resolved: ${absPath}`);
+
+    // Serve directly from fs rather than net.fetch(file://...): Electron's
+    // net.fetch does not honor Range headers for the file: scheme — it always
+    // returns the whole file with status 200, regardless of what range was
+    // requested. That breaks HTML5 video seeking: a mid-file seek issues a
+    // ranged request, gets back the full file from byte 0 with status 200
+    // instead of 206, and Chromium's media pipeline reinterprets that as the
+    // start of the resource, snapping playback back to time 0. Streaming the
+    // requested byte range ourselves keeps Range/206 semantics correct.
+    try {
+      const stats = await stat(absPath);
+      const fileSize = stats.size;
+
+      const ext = extname(absPath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+      };
+      const contentType = mimeMap[ext] || "application/octet-stream";
+
+      const headers = new Headers();
+      headers.set("Content-Type", contentType);
+      headers.set("Accept-Ranges", "bytes");
+
+      const range = request.headers.get("range");
+      if (range) {
+        console.log(`[${ASSET_SCHEME}] Range: ${range}`);
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        const start = match?.[1] ? parseInt(match[1], 10) : 0;
+        const end = match?.[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+        if (!match || start > end || end >= fileSize) {
+          headers.set("Content-Range", `bytes */${fileSize}`);
+          return new Response("Range Not Satisfiable", { status: 416, headers });
+        }
+
+        headers.set("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        headers.set("Content-Length", String(end - start + 1));
+
+        const stream = createReadStream(absPath, { start, end });
+        return new Response(Readable.toWeb(stream) as unknown as ReadableStream, { status: 206, headers });
+      }
+
+      headers.set("Content-Length", String(fileSize));
+      const stream = createReadStream(absPath);
+      return new Response(Readable.toWeb(stream) as unknown as ReadableStream, { status: 200, headers });
+    } catch (err) {
+      console.error(`[${ASSET_SCHEME}] Failed to load ${absPath}:`, err);
+      return new Response("Not Found", { status: 404 });
+    }
   });
 
   // app:// scheme serves bundled resources (audio-icon.png, placeholder.png, etc.)
@@ -448,6 +935,7 @@ app.whenReady().then(() => {
   ipcMain.handle("project:pick", pickProject);
   ipcMain.handle("project:save", saveProject);
   ipcMain.handle("project:ensureWorkspace", ensureWorkspace);
+  ipcMain.handle("project:export", exportProject);
   ipcMain.handle("assets:save", saveAsset);
   ipcMain.handle("assets:pick", pickImage);
   ipcMain.handle("content:pick", pickContent);
@@ -459,7 +947,42 @@ app.whenReady().then(() => {
     const { width, height } = screen.getPrimaryDisplay().size;
     return { width, height };
   });
+  ipcMain.handle("app:root", () => getAppRoot());
   ipcMain.handle("kiosk:info", () => ({ kiosk: IS_KIOSK, projectPath: KIOSK_PROJECT }));
+  ipcMain.handle("analytics:write", async (_e, path: string, data: string, appendMode: boolean) => {
+    try {
+      // Resolve to absolute path (relative paths are resolved against userData)
+      const absPath = isAbsolute(path) ? normalize(path) : join(app.getPath("userData"), path);
+
+      // Security: Validate path is within safe boundaries (userData or temp)
+      const userDataDir = app.getPath("userData");
+      const tempDir = app.getPath("temp");
+      const isInUserData = absPath.startsWith(userDataDir);
+      const isInTemp = absPath.startsWith(tempDir);
+
+      if (!isInUserData && !isInTemp) {
+        return {
+          success: false,
+          error: `Path outside allowed directories. Must be in ${userDataDir} or ${tempDir}`
+        };
+      }
+
+      // Ensure parent directory exists
+      await mkdir(dirname(absPath), { recursive: true });
+
+      // Write or append
+      if (appendMode) {
+        await appendFile(absPath, data + "\n", "utf-8");
+      } else {
+        await writeFile(absPath, data, "utf-8");
+      }
+
+      return { success: true };
+    } catch (err) {
+      console.error("[IPC] analytics:write failed:", err);
+      return { success: false, error: String(err) };
+    }
+  });
   ipcMain.handle("window:fullscreen", (e, on: boolean) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w) return;

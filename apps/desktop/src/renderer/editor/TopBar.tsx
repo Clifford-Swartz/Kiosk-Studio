@@ -1,5 +1,41 @@
-import { useEffect, useRef, useState } from "react";
 import { useEditor } from "./store.js";
+
+/**
+ * Menu dropdown button. Click shows menu with options.
+ * Uses native <select> for simplicity (matches existing patterns).
+ */
+function MenuDropdown({
+  label,
+  options,
+}: {
+  label: string;
+  options: { label: string; action: () => void; disabled?: boolean }[];
+}) {
+  return (
+    <select
+      value=""
+      onChange={(e) => {
+        const opt = options.find((o) => o.label === e.target.value);
+        if (opt && !opt.disabled) {
+          opt.action();
+          e.target.value = "";
+        }
+      }}
+      style={{
+        ...btn,
+        paddingRight: 20,
+        cursor: "pointer",
+      }}
+    >
+      <option value="">{label} ▾</option>
+      {options.map((opt) => (
+        <option key={opt.label} value={opt.label} disabled={opt.disabled}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 /**
  * Top ribbon (Composer-style): scene selector + add/rename/delete scene,
@@ -8,128 +44,95 @@ import { useEditor } from "./store.js";
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onOpen, onImportPptx, undoRef, redoRef, canUndo, canRedo }: {
+export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onExport, onUndo, onRedo, canUndo, canRedo }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
+  onSaveAs: () => void;
   onOpen: () => void;
   onImportPptx: () => void;
-  undoRef: React.MutableRefObject<() => void>;
-  redoRef: React.MutableRefObject<() => void>;
+  onExport: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
 }) {
 
-  const project = useEditor((s) => s.project);
-  const activeSceneId = useEditor((s) => s.activeSceneId);
   const dirty = useEditor((s) => s.dirty);
-  const setActiveScene = useEditor((s) => s.setActiveScene);
-  const addScene = useEditor((s) => s.addScene);
-  const renameScene = useEditor((s) => s.renameScene);
-  const removeScene = useEditor((s) => s.removeScene);
   const snapEnabled = useEditor((s) => s.snapEnabled);
   const toggleSnap = useEditor((s) => s.toggleSnap);
-
-  const active = project.scenes.find((s) => s.id === activeSceneId);
-
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function startRename() {
-    if (!active) return;
-    setDraft(active.name);
-    setRenaming(true);
-  }
-  function commitRename() {
-    if (active && draft.trim()) renameScene(active.id, draft.trim());
-    setRenaming(false);
-  }
-
-  useEffect(() => {
-    if (renaming) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [renaming]);
+  const viewport = useEditor((s) => s.canvasViewport);
+  const resetViewport = useEditor((s) => s.resetViewport);
 
   return (
     <div style={bar}>
-      <span style={{ fontWeight: 700, color: "#e2e8f0", marginRight: 8 }}>
+      {/* Left: Title + Dropdowns */}
+      <span style={{ fontWeight: 700, color: "#e2e8f0", marginRight: 12 }}>
         Kiosk Studio{dirty ? " •" : ""}
       </span>
 
-      <span style={{ color: "#64748b", fontSize: 12 }}>Scene</span>
-      {renaming ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") setRenaming(false);
-          }}
-          style={select}
-        />
-      ) : (
-        <select
-          value={activeSceneId}
-          onChange={(e) => setActiveScene(e.target.value)}
-          onDoubleClick={startRename}
-          title="Double-click to rename"
-          style={select}
-        >
-          {project.scenes.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      )}
-
-      <button style={btn} onClick={addScene} title="Add scene">＋ Scene</button>
-      <button style={btn} onClick={startRename}>
-        Rename
-      </button>
-      <button
-        style={btn}
-        disabled={project.scenes.length <= 1}
-        onClick={() => active && removeScene(active.id)}
-      >
-        Delete scene
-      </button>
+      <MenuDropdown
+        label="File"
+        options={[
+          { label: "Open…", action: onOpen },
+          { label: "Save", action: onSave },
+          { label: "Save As…", action: onSaveAs },
+          { label: "Export Project…", action: onExport },
+          { label: "Import PPTX…", action: onImportPptx },
+        ]}
+      />
 
       <div style={{ flex: 1 }} />
 
+      {/* Right: Icon Buttons */}
       <button
-        style={{ ...btn, ...(snapEnabled ? toggleOn : null) }}
-        onClick={toggleSnap}
-        title="Snap to alignment guides (hold Alt while dragging to override)"
+        style={{ ...iconBtn, ...playBtn }}
+        onClick={onKiosk}
+        title="Fullscreen kiosk mode (Ctrl+K, Esc to exit)"
       >
-        Snap: {snapEnabled ? "On" : "Off"}
+        ⛶
       </button>
+
+      <button style={{ ...iconBtn, ...playBtn }} onClick={onPlay} title="Preview (Ctrl+P)">
+        ▶
+      </button>
+
       <button
-        style={{ ...btn, ...(canUndo ? {} : disabledBtn) }}
-        onClick={() => undoRef.current()}
+        style={{ ...iconBtn, ...(canUndo ? {} : disabledIconBtn) }}
+        onClick={() => onUndo()}
         disabled={!canUndo}
         title="Undo (Ctrl+Z)"
       >
-        ↶ Undo
+        ↶
       </button>
+
       <button
-        style={{ ...btn, ...(canRedo ? {} : disabledBtn) }}
-        onClick={() => redoRef.current()}
+        style={{ ...iconBtn, ...(canRedo ? {} : disabledIconBtn) }}
+        onClick={() => onRedo()}
         disabled={!canRedo}
         title="Redo (Ctrl+Y)"
       >
-        ↷ Redo
+        ↷
       </button>
-      <button style={btn} onClick={onOpen}>Open…</button>
-      <button style={btn} onClick={onImportPptx} title="Import a PowerPoint as scenes">Import PPTX…</button>
-      <button style={btn} onClick={onSave}>Save</button>
-      <button style={btn} onClick={onKiosk} title="Fullscreen kiosk mode (Esc to exit)">⛶ Kiosk</button>
-      <button style={{ ...btn, ...playBtn }} onClick={onPlay}>▶ Play</button>
+
+      <button
+        style={{ ...iconBtn, opacity: snapEnabled ? 1 : 0.4 }}
+        onClick={toggleSnap}
+        title={snapEnabled ? "Snap to guides: ON" : "Snap to guides: OFF"}
+      >
+        ⊞
+      </button>
+
+      <button
+        style={{
+          ...iconBtn,
+          opacity: viewport.userZoom !== 1 || viewport.panX !== 0 || viewport.panY !== 0 ? 1 : 0.4
+        }}
+        onClick={resetViewport}
+        title="Reset zoom to fit window (Ctrl+0)"
+      >
+        ⊡
+      </button>
     </div>
   );
 }
@@ -144,7 +147,7 @@ const bar: React.CSSProperties = {
   flexShrink: 0,
 };
 const btn: React.CSSProperties = {
-  background: "#161c26",
+  background: "#1d2430",
   border: "1px solid #232c3a",
   borderRadius: 6,
   color: "#e2e8f0",
@@ -152,27 +155,26 @@ const btn: React.CSSProperties = {
   padding: "6px 10px",
   cursor: "pointer",
 };
-const toggleOn: React.CSSProperties = {
-  background: "#1e3a52",
-  borderColor: "#38bdf8",
-  color: "#e0f2fe",
-};
-const playBtn: React.CSSProperties = {
-  background: "#2563eb",
-  borderColor: "#1d4ed8",
-  color: "#fff",
-  fontWeight: 600,
-};
-const select: React.CSSProperties = {
-  background: "#161c26",
+const iconBtn: React.CSSProperties = {
+  background: "#2c3647",
   border: "1px solid #232c3a",
   borderRadius: 6,
   color: "#e2e8f0",
-  fontSize: 13,
-  padding: "6px 8px",
-  minWidth: 140,
+  fontSize: 16,
+  padding: "6px 12px",
+  cursor: "pointer",
+  minWidth: 40,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
-const disabledBtn: React.CSSProperties = {
-  opacity: 0.5,
+const disabledIconBtn: React.CSSProperties = {
+  opacity: 0.4,
   cursor: "not-allowed",
+};
+const playBtn: React.CSSProperties = {
+  background: "#3b5da5",
+  borderColor: "#1a274b",
+  color: "#fff",
+  fontWeight: 600,
 };

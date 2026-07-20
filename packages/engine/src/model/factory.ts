@@ -34,24 +34,44 @@ const TYPE_DEFAULTS: Record<
   video: {
     width: 480,
     height: 270,
-    props: { src: "", fit: "cover", autoplay: true, loop: true, muted: true },
+    props: {
+      src: "",
+      fit: "cover",
+      autoplay: true,
+      loop: true,
+      muted: true,
+      volume: 1.0,
+      playbackRate: 1.0,
+      preload: "metadata",
+      showControls: false,
+    },
   },
   audio: {
-    width: 60,
-    height: 60,
+    width: 90,
+    height: 90,
     props: { src: "", volume: 1, fade: 0, autoplay: false, loop: false, muted: false },
   },
   button: {
     width: 280,
     height: 96,
-    props: { label: "Button", fill: "#2563eb", color: "#ffffff", radius: 12, fontSize: 28 },
+    props: {
+      label: "Button",
+      fillType: "color",
+      fill: "#2563eb",
+      imageSrc: "__placeholder__",
+      imageFit: "cover",
+      color: "#ffffff",
+      radius: 12,
+      fontSize: 28
+    },
   },
-  group: { width: 320, height: 240, props: {} },
+  layer: { width: 1920, height: 1080, props: {} },
   collection: {
     width: 900,
     height: 520,
     props: {
       layout: "grid",
+      fit: "cover",
       columns: 3,
       gap: 16,
       activeIndex: 0,
@@ -59,10 +79,11 @@ const TYPE_DEFAULTS: Record<
       itemBg: "#1e293b",
       titleColor: "#f8fafc",
       subtitleColor: "#94a3b8",
+      showControls: false,
       items: [
-        { id: "i1", title: "Item One", subtitle: "Subtitle", image: "" },
-        { id: "i2", title: "Item Two", subtitle: "Subtitle", image: "" },
-        { id: "i3", title: "Item Three", subtitle: "Subtitle", image: "" },
+        { id: "i1", title: "Item One", subtitle: "Subtitle", image: "", thumbnail: "" },
+        { id: "i2", title: "Item Two", subtitle: "Subtitle", image: "", thumbnail: "" },
+        { id: "i3", title: "Item Three", subtitle: "Subtitle", image: "", thumbnail: "" },
       ],
     },
   },
@@ -77,8 +98,8 @@ export function createElement(
     id: partial.id ?? newId(type),
     type,
     name: partial.name,
-    x: partial.x ?? 100,
-    y: partial.y ?? 100,
+    x: partial.x ?? (type === "layer" ? 0 : 100),
+    y: partial.y ?? (type === "layer" ? 0 : 100),
     width: partial.width ?? d.width,
     height: partial.height ?? d.height,
     rotation: partial.rotation ?? 0,
@@ -87,6 +108,9 @@ export function createElement(
     props: { ...d.props, ...(partial.props ?? {}) },
     bindings: partial.bindings ?? [],
     interactions: partial.interactions ?? [],
+    tint: partial.tint,
+    mask: partial.mask,
+    locked: partial.locked ?? false,
     children: partial.children,
   };
 }
@@ -97,6 +121,8 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     id: partial.id ?? newId("scene"),
     name: partial.name ?? "New scene",
     background: partial.background ?? "#0f172a",
+    backgroundSize: partial.backgroundSize,
+    backgroundPosition: partial.backgroundPosition,
     elements: partial.elements ?? [],
   };
 }
@@ -104,13 +130,15 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
 export function createProject(partial: Partial<Project> = {}): Project {
   const scenes = partial.scenes ?? [createScene({ name: "Home" })];
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     id: partial.id ?? newId("proj"),
     name: partial.name ?? "Untitled",
     width: partial.width ?? 1920,
     height: partial.height ?? 1080,
     startSceneId: partial.startSceneId ?? scenes[0]?.id,
     scenes,
-    dataSources: partial.dataSources ?? [],
+    dataConnectors: partial.dataConnectors ?? [],
+    enableBackButton: partial.enableBackButton ?? false,
+    enableHomeButton: partial.enableHomeButton ?? false,
   };
 }

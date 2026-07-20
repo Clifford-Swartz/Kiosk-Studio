@@ -1,11 +1,22 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Element } from "../model/types.js";
 import { CollectionRenderer } from "./collections/CollectionRenderer.js";
+import { VideoControls } from "./VideoControls.js";
+import { eventBus } from "../events/EventBus.js";
+import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
 
 export interface ElementRendererProps {
   element: Element;
   /** Fired when an element with a `tap` interaction is activated. */
   onTap?: (element: Element) => void;
+  /** Fired when an element with a `hover` interaction is entered. */
+  onHover?: (element: Element) => void;
+  /** Fired when an element with a `hoverEnd` interaction is left. */
+  onHoverEnd?: (element: Element) => void;
+  /** Fired when an element with a `press` interaction is pointer-pressed. */
+  onPress?: (element: Element) => void;
+  /** Fired when an element with a `release` interaction is pointer-released. */
+  onRelease?: (element: Element) => void;
   /**
    * Base URL for resolving relative asset `src` values (e.g. "assets/x.png").
    * Typically a `file://<projectDir>/` URL. Absolute URLs pass through.
@@ -15,6 +26,16 @@ export interface ElementRendererProps {
   playing?: boolean;
   /** Callback to register audio elements by ID for playback control. */
   onAudioRef?: (elementId: string, ref: HTMLAudioElement | null) => void;
+  /** Callback to register video elements by ID for playback control. */
+  onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
+  /** True when rendering in editor mode; disables button interaction overlays. */
+  editorMode?: boolean;
+  /**
+   * Resolves an element through the binding/state/override/animation pipeline.
+   * Applied to children too, so elements nested in a "layer" container pick up
+   * scene-state and binding overrides the same as top-level elements.
+   */
+  resolveElement?: (element: Element) => Element;
 }
 
 // Embedded fallback: 1×1 transparent PNG data URI (for empty src fields)
@@ -43,21 +64,30 @@ export function resolveSrc(src: string, base?: string): string {
   // Absolute URLs pass through
   if (/^([a-z]+:)?\/\//i.test(src) || src.startsWith("data:")) return src;
 
-  // Relative paths → join with base
+  // Relative paths → join with base, encoding each segment
   if (!base) return src;
-  return base.endsWith("/") ? base + src : `${base}/${src}`;
+
+  // Split path into segments and encode each (handles spaces, special chars)
+  const segments = src.split("/").map(encodeURIComponent);
+  const encodedSrc = segments.join("/");
+
+  return base.endsWith("/") ? base + encodedSrc : `${base}/${encodedSrc}`;
 }
 
 /**
  * Renders a single scene element as an absolutely-positioned DOM node using
  * CSS transforms. This is the shared rendering primitive used by both the
  * Player and (later) the Editor canvas.
+ *
+ * Memoized to prevent unnecessary re-renders when parent updates but element props unchanged.
  */
-export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudioRef }: ElementRendererProps) {
+export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode, resolveElement }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
   const isInteractive = element.interactions.some((i) => i.trigger === "tap");
+  const isHoverable = element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
+  const isPressable = element.interactions.some((i) => i.trigger === "press" || i.trigger === "release");
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -69,20 +99,74 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
     zIndex,
     transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
     transformOrigin: "center center",
-    cursor: isInteractive ? "pointer" : "default",
+    cursor: isInteractive || isPressable ? "pointer" : "default",
     userSelect: "none",
   };
 
   const handleClick = isInteractive ? () => onTap?.(element) : undefined;
 
-  const children = element.children?.map((child) => (
-    <ElementRenderer key={child.id} element={child} onTap={onTap} assetBaseUrl={assetBaseUrl} playing={playing} />
-  ));
+  const handleMouseEnter = onHover && isHoverable
+    ? (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "hover")) {
+          onHover(element);
+        }
+      }
+    : undefined;
+
+  const handleMouseLeave = onHoverEnd && isHoverable
+    ? (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "hoverEnd")) {
+          onHoverEnd(element);
+        }
+      }
+    : undefined;
+
+  const handlePointerDown = onPress && isPressable
+    ? (e: React.PointerEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "press")) {
+          onPress(element);
+        }
+      }
+    : undefined;
+
+  const handlePointerUp = onRelease && isPressable
+    ? (e: React.PointerEvent) => {
+        e.stopPropagation();
+        if (element.interactions.some((i) => i.trigger === "release")) {
+          onRelease(element);
+        }
+      }
+    : undefined;
+
+  const children = element.children?.map((child) => {
+    const resolvedChild = resolveElement ? resolveElement(child) : child;
+    return (
+      <ElementRenderer
+        key={child.id}
+        element={resolvedChild}
+        onTap={onTap}
+        onHover={onHover}
+        onHoverEnd={onHoverEnd}
+        onPress={onPress}
+        onRelease={onRelease}
+        assetBaseUrl={assetBaseUrl}
+        playing={playing}
+        editorMode={editorMode}
+        onAudioRef={onAudioRef}
+        onVideoRef={onVideoRef}
+        resolveElement={resolveElement}
+      />
+    );
+  });
 
   switch (type) {
     case "rectangle":
       return (
         <div
+          data-element-id={element.id}
           style={{
             ...baseStyle,
             backgroundColor: str(props.fill, "#3b82f6"),
@@ -90,6 +174,10 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
             border: str(props.border, "none"),
           }}
           onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
           {children}
         </div>
@@ -97,22 +185,44 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
 
     case "text":
       return (
-        <TextElement props={props} baseStyle={baseStyle} width={width} height={height} onClick={handleClick}>
+        <TextElement
+          elementId={element.id}
+          props={props}
+          baseStyle={baseStyle}
+          width={width}
+          height={height}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
           {children}
         </TextElement>
       );
 
-    case "image":
+    case "image": {
+      const imageSrc = resolveSrc(str(props.src, ""), assetBaseUrl);
+      const isReady = imageLoadQueue.useImageReady(imageSrc, zIndex ?? 0);
+
       return (
         <img
-          src={resolveSrc(str(props.src, ""), assetBaseUrl)}
+          data-element-id={element.id}
+          src={isReady ? imageSrc : PLACEHOLDER_FALLBACK}
           alt={str(props.alt, "")}
           draggable={false}
+          decoding="async"
+          loading="lazy"
           style={{
             ...baseStyle,
             objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+            transition: isReady ? "opacity 0.2s ease-in" : "none",
           }}
           onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
           onError={(e) => {
             // If bundled placeholder fails to load, fall back to embedded SVG
             const target = e.currentTarget;
@@ -123,20 +233,16 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
           }}
         />
       );
+    }
 
     case "video":
       return (
-        <video
-          src={resolveSrc(str(props.src, ""), assetBaseUrl)}
-          autoPlay={bool(props.autoplay, true)}
-          loop={bool(props.loop, true)}
-          muted={bool(props.muted, true)}
-          playsInline
-          style={{
-            ...baseStyle,
-            objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
-          }}
-          onClick={handleClick}
+        <VideoElement
+          element={element}
+          assetBaseUrl={assetBaseUrl}
+          playing={playing}
+          onVideoRef={onVideoRef}
+          baseStyle={baseStyle}
         />
       );
 
@@ -152,38 +258,157 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
         />
       );
 
-    case "button":
+    case "button": {
+      const fillType = str(props.fillType, "color");
+      const imageSrc = resolveSrc(str(props.imageSrc, ""), assetBaseUrl);
+      const imageFit = str(props.imageFit, "cover") as React.CSSProperties["objectFit"];
+      const radius = num(props.radius, 12);
+      const isButtonImageReady = imageLoadQueue.useImageReady(imageSrc, zIndex ?? 0);
+
+      return (
+        <>
+          {/* Visual button element at its normal z-index */}
+          <div
+            data-element-id={element.id}
+            role="button"
+            style={{
+              ...baseStyle,
+              backgroundColor: fillType === "color" ? str(props.fill, "#2563eb") : "transparent",
+              color: str(props.color, "#ffffff"),
+              borderRadius: radius,
+              fontSize: num(props.fontSize, 28),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              pointerEvents: editorMode ? "none" : "none", // Disable events on visual element
+              overflow: "hidden",
+            }}
+          >
+            {/* Image fill background */}
+            {fillType === "image" && (
+              <img
+                src={isButtonImageReady ? imageSrc : PLACEHOLDER_FALLBACK}
+                alt=""
+                draggable={false}
+                decoding="async"
+                loading="lazy"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: imageFit,
+                  pointerEvents: "none",
+                  zIndex: 0,
+                  transition: isButtonImageReady ? "opacity 0.2s ease-in" : "none",
+                }}
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src.startsWith("app://placeholder")) {
+                    target.src = PLACEHOLDER_FALLBACK;
+                  }
+                }}
+              />
+            )}
+            {/* Label text */}
+            <span style={{ position: "relative", zIndex: 1 }}>
+              {str(props.label, "Button")}
+            </span>
+            {children}
+          </div>
+          {/* Invisible interaction overlay at high z-index (only in player mode) */}
+          {!editorMode && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                width,
+                height,
+                transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
+                transformOrigin: "top left",
+                zIndex: 999999, // Very high z-index to capture events above everything
+                borderRadius: radius, // Match visual button's shape
+                cursor: "pointer",
+                pointerEvents: "auto",
+              }}
+              onClick={() => onTap?.(element)}
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+            />
+          )}
+        </>
+      );
+    }
+
+    case "layer": {
+      const { tint, mask } = element;
+
+      // Build inline SVG clipPath if mask exists
+      let clipPathStyle: string | undefined;
+      if (mask) {
+        let pathData: string;
+        if (mask.type === 'rect') {
+          const x1 = mask.points[0][0];
+          const y1 = mask.points[0][1];
+          const w = mask.points[1][0] - x1;
+          const h = mask.points[1][1] - y1;
+          pathData = `M ${x1} ${y1} L ${x1 + w} ${y1} L ${x1 + w} ${y1 + h} L ${x1} ${y1 + h} Z`;
+        } else {
+          pathData = `M ${mask.points.map((p, i) => (i === 0 ? `${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(' ')} Z`;
+        }
+        const svgPath = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path d="${pathData}" fill="white"/></svg>`)}`;
+        clipPathStyle = `url("${svgPath}")`;
+      }
+
       return (
         <div
-          role="button"
+          data-element-id={element.id}
           style={{
             ...baseStyle,
-            backgroundColor: str(props.fill, "#2563eb"),
-            color: str(props.color, "#ffffff"),
-            borderRadius: num(props.radius, 12),
-            fontSize: num(props.fontSize, 28),
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
+            WebkitMaskImage: clipPathStyle,
+            maskImage: clipPathStyle,
+            WebkitMaskSize: `${width}px ${height}px`,
+            maskSize: `${width}px ${height}px`,
+            WebkitMaskRepeat: 'no-repeat',
+            maskRepeat: 'no-repeat',
           }}
-          onClick={() => onTap?.(element)}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         >
-          {str(props.label, "Button")}
           {children}
+          {tint && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundColor: tint.color,
+                opacity: tint.opacity,
+                pointerEvents: 'none',
+              }}
+            />
+          )}
         </div>
       );
-
-    case "group":
-      return (
-        <div style={baseStyle} onClick={handleClick}>
-          {children}
-        </div>
-      );
+    }
 
     case "collection":
       return (
-        <div style={{ ...baseStyle, overflow: "hidden" }} onClick={handleClick}>
+        <div
+          data-element-id={element.id}
+          style={{ ...baseStyle, overflow: "hidden" }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
           <CollectionRenderer
             width={width}
             height={height}
@@ -197,7 +422,21 @@ export function ElementRenderer({ element, onTap, assetBaseUrl, playing, onAudio
     default:
       return null;
   }
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if element or key props actually changed
+  // This prevents cascading re-renders when parent state updates but element unchanged
+  return (
+    prevProps.element === nextProps.element &&
+    prevProps.playing === nextProps.playing &&
+    prevProps.assetBaseUrl === nextProps.assetBaseUrl &&
+    prevProps.editorMode === nextProps.editorMode &&
+    prevProps.onTap === nextProps.onTap &&
+    prevProps.onHover === nextProps.onHover &&
+    prevProps.onHoverEnd === nextProps.onHoverEnd &&
+    prevProps.onPress === nextProps.onPress &&
+    prevProps.onRelease === nextProps.onRelease
+  );
+});
 
 // --- audio element with fade-in/out ----------------------------------------
 
@@ -227,6 +466,12 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
 
   // Setup fade-in on play
   const handlePlay = () => {
+    // Emit audioPlay event
+    eventBus.emit({
+      kind: "audioPlay",
+      payload: { elementId: element.id, currentTime: audioRef.current?.currentTime ?? 0 }
+    });
+
     if (audioRef.current && fadeMs > 0) {
       cancelAnimationFrame(fadeAnimationRef.current ?? 0);
       clearTimeout(fadeTimeoutRef.current);
@@ -307,7 +552,21 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     }
   };
 
+  const handlePause = () => {
+    // Emit audioPause event
+    eventBus.emit({
+      kind: "audioPause",
+      payload: { elementId: element.id, currentTime: audioRef.current?.currentTime ?? 0 }
+    });
+  };
+
   const handleEnded = () => {
+    // Emit audioComplete event
+    eventBus.emit({
+      kind: "audioComplete",
+      payload: { elementId: element.id, duration: audioRef.current?.duration ?? 0 }
+    });
+
     cancelAnimationFrame(fadeAnimationRef.current ?? 0);
     clearTimeout(fadeTimeoutRef.current);
   };
@@ -334,11 +593,12 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     };
   }, [element.id, onAudioRef]);
 
-  // Embedded fallback audio icon (speaker with sound waves) - 60x60 SVG as data URI
-  const AUDIO_ICON_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='11 5 6 9 2 9 2 15 6 15 11 19 11 5'%3E%3C/polygon%3E%3Cpath d='M15.54 8.46a5 5 0 0 1 0 7.07'%3E%3C/path%3E%3Cpath d='M19.07 4.93a10 10 0 0 1 0 14.14'%3E%3C/path%3E%3C/svg%3E";
+  // Embedded audio icon (speaker with sound waves) - base64 encoded SVG
+  const AUDIO_ICON = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM5NGEzYjgiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWdvbiBwb2ludHM9IjExIDUgNiA5IDIgOSAyIDE1IDYgMTUgMTEgMTkgMTEgNSI+PC9wb2x5Z29uPjxwYXRoIGQ9Ik0xNS41NCA4LjQ2YTUgNSAwIDAgMSAwIDcuMDciPjwvcGF0aD48cGF0aCBkPSJNMTkuMDcgNC45M2ExMCAxMCAwIDAgMSAwIDE0LjE0Ij48L3BhdGg+PC9zdmc+";
 
   return (
     <div
+      data-element-id={element.id}
       style={{
         ...baseStyle,
         border: "1px solid #64748b",
@@ -354,13 +614,9 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     >
       {/* Background icon image */}
       <img
-        src="app://audio-icon.png"
+        src={AUDIO_ICON}
         alt="Audio"
         draggable={false}
-        onError={(e) => {
-          // Fallback to embedded SVG if bundled icon fails to load
-          e.currentTarget.src = AUDIO_ICON_FALLBACK;
-        }}
         style={{
           width: "100%",
           height: "100%",
@@ -377,6 +633,7 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
         loop={loop}
         muted={muted}
         onPlay={handlePlay}
+        onPause={handlePause}
         onCanPlay={handleCanPlay}
         onEnded={handleEnded}
         onError={() => console.warn(`Failed to load audio: ${src}`)}
@@ -385,6 +642,216 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
     </div>
   );
 }
+
+// --- video element with Video.js -------------------------------------------
+
+interface VideoElementProps {
+  element: Element;
+  assetBaseUrl?: string;
+  playing?: boolean;
+  onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
+  baseStyle: React.CSSProperties;
+}
+
+/**
+ * Native HTML5 video element with programmatic control.
+ * Supports standard video formats (mp4, webm, ogg).
+ */
+function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hasError, setHasError] = useState(false);
+  const [shouldLoad, setShouldLoad] = useState(false);
+  // Tracks the same node as videoRef, but as state — a prop read from
+  // videoRef.current would still see the pre-mount value on the render that
+  // introduces the <video> tag, since refs attach during commit.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const { props } = element;
+
+  const src = resolveSrc(str(props.src, ""), assetBaseUrl);
+  const rawSrc = str(props.src, "");
+  const hasSource = rawSrc && rawSrc.trim() !== "";
+
+  // Lazy-load video when in viewport (with margin for preloading just before scroll)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !hasSource) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setShouldLoad(true);
+            observer.disconnect(); // Load once, never unload
+          }
+        });
+      },
+      { root: null, rootMargin: "200px" } // root: null = observe relative to viewport
+    );
+
+    // Fallback: force load after 2s if observer never fires (e.g., scaled viewport issues)
+    const timeout = setTimeout(() => setShouldLoad(true), 2000);
+
+    observer.observe(container);
+    return () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+    };
+  }, [hasSource]);
+
+  // Register video ref with Player and setup event listeners
+  useEffect(() => {
+    const video = videoRef.current;
+    onVideoRef?.(element.id, video);
+
+    if (!video) return;
+
+    // Event listeners for analytics
+    const onPlay = () => {
+      eventBus.emit({
+        kind: "videoPlay",
+        payload: { elementId: element.id, currentTime: video.currentTime }
+      });
+    };
+
+    const onPause = () => {
+      eventBus.emit({
+        kind: "videoPause",
+        payload: { elementId: element.id, currentTime: video.currentTime }
+      });
+    };
+
+    const onEnded = () => {
+      eventBus.emit({
+        kind: "videoComplete",
+        payload: { elementId: element.id, duration: video.duration }
+      });
+    };
+
+    const onSeeked = () => {
+      eventBus.emit({
+        kind: "videoSeek",
+        payload: { elementId: element.id, currentTime: video.currentTime }
+      });
+    };
+
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("ended", onEnded);
+    video.addEventListener("seeked", onSeeked);
+
+    return () => {
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("ended", onEnded);
+      video.removeEventListener("seeked", onSeeked);
+      onVideoRef?.(element.id, null);
+    };
+  }, [element.id, onVideoRef]);
+
+  // Handle autoplay when playing prop changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playing || !bool(props.autoplay, true) || !hasSource) return;
+
+    const tryPlay = () => {
+      video.play().catch((err) => {
+        console.warn(`[VideoElement ${element.id}] Autoplay blocked:`, err);
+      });
+    };
+
+    // If video already loaded enough data, play immediately
+    if (video.readyState >= 3) {
+      tryPlay();
+    } else {
+      // Otherwise wait for canplaythrough event
+      video.addEventListener("canplaythrough", tryPlay, { once: true });
+      return () => video.removeEventListener("canplaythrough", tryPlay);
+    }
+  }, [element.id, playing, props.autoplay, hasSource, src]);
+
+  return (
+    <div ref={containerRef} data-element-id={element.id} style={baseStyle}>
+      {hasSource && shouldLoad && (
+        <video
+          ref={(el) => {
+            videoRef.current = el;
+            setVideoEl(el);
+          }}
+          src={src}
+          autoPlay={bool(props.autoplay, true) && playing}
+          loop={bool(props.loop, true)}
+          muted={bool(props.muted, true)}
+          playsInline
+          preload={str(props.preload, "metadata") as "auto" | "metadata" | "none"}
+          onError={(e) => {
+            const video = e.currentTarget;
+            const errorCode = video.error?.code;
+            const errorMsg = video.error?.message;
+            console.error(`[VideoElement ${element.id}] Load error:`, {
+              src: rawSrc,
+              resolvedSrc: src,
+              errorCode,
+              errorMsg,
+              codes: { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" },
+            });
+            setHasError(true);
+          }}
+          onLoadStart={() => setHasError(false)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+          }}
+        />
+      )}
+      {hasSource && shouldLoad && playing && bool(props.showControls, false) && (
+        <VideoControls video={videoEl} />
+      )}
+      {!hasSource && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#1e293b",
+            color: "#64748b",
+            fontSize: 24,
+            fontFamily: "system-ui, sans-serif",
+            pointerEvents: "none",
+          }}
+        >
+          🎬 No video source
+        </div>
+      )}
+      {hasError && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#1e293b",
+            color: "#64748b",
+            fontSize: 24,
+            fontFamily: "system-ui, sans-serif",
+            pointerEvents: "none",
+          }}
+        >
+          ⚠️ Video failed to load
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Detect MIME type from file extension.
+ * Supports: mp4, webm, ogg, m3u8 (HLS), mpd (DASH).
+ */
 
 // --- text element (per-line rich text + autofit) ----------------------------
 
@@ -408,18 +875,28 @@ const LINE_HEIGHT = 1.15; // tight, close to PowerPoint's default
  * live, so the stored fontScale is usually absent and we can't trust it).
  */
 function TextElement({
+  elementId,
   props,
   baseStyle,
   width,
   height,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
+  onPointerDown,
+  onPointerUp,
   children,
 }: {
+  elementId: string;
   props: Record<string, unknown>;
   baseStyle: React.CSSProperties;
   width: number;
   height: number;
   onClick?: () => void;
+  onMouseEnter?: (e: React.MouseEvent) => void;
+  onMouseLeave?: (e: React.MouseEvent) => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
+  onPointerUp?: (e: React.PointerEvent) => void;
   children?: React.ReactNode;
 }) {
   const align = str(props.align, "left") as "left" | "center" | "right";
@@ -457,6 +934,7 @@ function TextElement({
 
   return (
     <div
+      data-element-id={elementId}
       style={{
         ...baseStyle,
         color: baseColor,
@@ -475,6 +953,10 @@ function TextElement({
         overflow: "hidden",
       }}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
     >
       <div ref={innerRef} style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: justify }}>
         {lines.map((r, i) => {

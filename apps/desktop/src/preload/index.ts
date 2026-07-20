@@ -25,6 +25,12 @@ const api = {
   ensureWorkspace: (text: string, projectName: string): Promise<string> =>
     ipcRenderer.invoke("project:ensureWorkspace", text, projectName),
   /**
+   * Export the current project as a bundled .kproj folder with all assets.
+   * Returns the exported project path, or null if canceled.
+   */
+  exportProject: (projectPath: string, text: string): Promise<string | null> =>
+    ipcRenderer.invoke("project:export", projectPath, text),
+  /**
    * Copy image bytes (base64) into the project's assets/ folder; resolves to
    * the relative path ("assets/<name>") to store in the element's src.
    */
@@ -34,19 +40,19 @@ const api = {
   pickImage: (): Promise<{ name: string; base64: string } | null> =>
     ipcRenderer.invoke("assets:pick"),
   /**
-   * Show a content picker (image/video/audio) defaulting to the project's
+   * Show a content picker (image/video/audio) defaulting to the shared
    * user-content folder. Automatically copies external files into user-content.
    * Resolves to { name, path } (relative path) or null if canceled.
    */
-  pickContent: (projectPath: string, type: "image" | "video" | "audio"): Promise<{ name: string; path: string } | null> =>
-    ipcRenderer.invoke("content:pick", projectPath, type),
+  pickContent: (type: "image" | "video" | "audio" | "media"): Promise<{ name: string; path: string } | null> =>
+    ipcRenderer.invoke("content:pick", type),
   /**
-   * Copy an external file to the project's user-content folder, preserving its
+   * Copy an external file to the shared user-content folder, preserving its
    * original filename. Handles deduplication with _1, _2 suffixes.
    * Resolves to the relative path (e.g., "user-content/image.jpg").
    */
-  copyExternalFile: (projectPath: string, externalPath: string): Promise<string> =>
-    ipcRenderer.invoke("content:copyExternal", projectPath, externalPath),
+  copyExternalFile: (externalPath: string): Promise<string> =>
+    ipcRenderer.invoke("content:copyExternal", externalPath),
   /** Show a .pptx open dialog + parse it; resolves to a ParsedDeck or null. */
   importPptx: (): Promise<unknown | null> => ipcRenderer.invoke("pptx:import"),
 
@@ -59,6 +65,9 @@ const api = {
   /** Primary display resolution, for the "Match this display" scene preset. */
   getDisplaySize: (): Promise<{ width: number; height: number }> =>
     ipcRenderer.invoke("display:size"),
+  /** Get app root directory (for resolving user-content when no project saved). */
+  getAppRoot: (): Promise<string> =>
+    ipcRenderer.invoke("app:root"),
 
   // --- kiosk mode ---
   /** Whether the app launched in kiosk mode (and which project). */
@@ -68,15 +77,18 @@ const api = {
   exitKiosk: (): Promise<void> => ipcRenderer.invoke("kiosk:exit"),
   /** Toggle the OS window fullscreen (used by the in-app ▶ Play). */
   setFullscreen: (on: boolean): Promise<void> => ipcRenderer.invoke("window:fullscreen", on),
-  /** Subscribe to pushed connector values; returns an unsubscribe. */
-  onDataValue: (
-    cb: (value: { sourceId: string; value: unknown; at: number }) => void
+  /** Subscribe to EventBus-compatible events from main process; returns an unsubscribe. */
+  onEvent: (
+    cb: (event: { kind: string; payload: Record<string, unknown>; timestamp?: number; sessionId?: string; sceneId?: string }) => void
   ): (() => void) => {
-    const handler = (_e: unknown, value: { sourceId: string; value: unknown; at: number }) =>
-      cb(value);
-    ipcRenderer.on("data:value", handler);
-    return () => ipcRenderer.removeListener("data:value", handler);
+    const handler = (_e: unknown, event: { kind: string; payload: Record<string, unknown>; timestamp?: number; sessionId?: string; sceneId?: string }) =>
+      cb(event);
+    ipcRenderer.on("event:emit", handler);
+    return () => ipcRenderer.removeListener("event:emit", handler);
   },
+  /** Write analytics data to file (CSV/JSON/JSONL). */
+  writeAnalytics: (path: string, data: string, append: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("analytics:write", path, data, append),
 };
 
 export type KioskApi = typeof api;
