@@ -41,6 +41,7 @@ export class AnimationRuntime {
   private rafId: number | null = null;
   private currentOverrides: Map<string, Partial<Element>> = new Map();
   private elementLookup: ((elementId: string) => Element | null) | null = null;
+  private elementResolverFn: ((element: Element) => Element) | null = null;
   private notifyChange: (() => void) | null = null;
   private persistToOverrides: ((elementId: string, property: AnimatableProperty, value: AnimatableValue) => void) | null = null;
 
@@ -170,6 +171,15 @@ export class AnimationRuntime {
   }
 
   /**
+   * Set the resolver function (called by Player to provide ElementResolver's
+   * resolveElement, so `from` values reflect bindings + state + overrides,
+   * not just raw schema — see ADR 0010).
+   */
+  setElementResolver(resolver: ((element: Element) => Element) | null): void {
+    this.elementResolverFn = resolver;
+  }
+
+  /**
    * Set change notification callback (called by ElementResolver to invalidate cache on animation updates).
    */
   setNotifyChange(callback: (() => void) | null): void {
@@ -185,23 +195,24 @@ export class AnimationRuntime {
 
   /**
    * Get current rendered value for property (used when `from` is omitted).
-   * Reads from schema element via lookup function, or falls back to defaults.
+   * Resolves the base schema element through `elementResolverFn` (bindings +
+   * state + interaction overrides) so the animation starts from the value
+   * actually on screen, not the raw schema default (ADR 0010).
    */
   private getElementValue(elementId: string, property: AnimatableProperty): AnimatableValue {
-    // Try to get base element from lookup
-    let el: Element | Partial<Element> | null = this.elementLookup ? this.elementLookup(elementId) : null;
+    const baseEl = this.elementLookup ? this.elementLookup(elementId) : null;
 
-    // Check overrides (these take precedence over base element)
+    if (baseEl) {
+      const resolved = this.elementResolverFn ? this.elementResolverFn(baseEl) : baseEl;
+      return getCurrentValue(resolved, property);
+    }
+
     const overrides = this.currentOverrides.get(elementId);
     if (overrides) {
-      el = el ? { ...el, ...overrides } : overrides;
+      return getCurrentValue(overrides, property);
     }
 
-    if (!el) {
-      return getDefaultValue(property);
-    }
-
-    return getCurrentValue(el, property);
+    return getDefaultValue(property);
   }
 
   private startLoop(): void {

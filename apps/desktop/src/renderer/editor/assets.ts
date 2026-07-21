@@ -25,7 +25,7 @@ export async function getAppRootCached(): Promise<string> {
  * React hook version of projectAssetBase - returns stable value that updates
  * when app root cache warms. Use in Canvas/Player components.
  */
-export function useProjectAssetBase(_filePath: string | null): string | undefined {
+export function useProjectAssetBase(filePath: string | null): string | undefined {
   const [appRoot, setAppRoot] = useState(cachedAppRoot);
 
   useEffect(() => {
@@ -34,16 +34,25 @@ export function useProjectAssetBase(_filePath: string | null): string | undefine
     }
   }, []);
 
-  // Always return app root - user-content/ lives there in both dev and packaged
-  return appRoot ? `kioskasset://load/${encodeURIComponent(appRoot)}/` : undefined;
+  // Saved project: base on the project's own .kproj dir (assets/ lives beside
+  // project.json there), so main's kproj-boundary resolution actually fires.
+  // Unsaved project: fall back to app root for shared user-content/ assets.
+  const base = filePath ? dirnameFilePath(filePath) : appRoot;
+  return base ? `kioskasset://load/${encodeURIComponent(base)}/` : undefined;
 }
 
 /**
  * Sync version for non-React contexts (exports, protocol handler).
  */
-export function projectAssetBase(_filePath: string | null): string | undefined {
-  // Always return app root - user-content/ lives there in both dev and packaged
-  return cachedAppRoot ? `kioskasset://load/${encodeURIComponent(cachedAppRoot)}/` : undefined;
+export function projectAssetBase(filePath: string | null): string | undefined {
+  const base = filePath ? dirnameFilePath(filePath) : cachedAppRoot;
+  return base ? `kioskasset://load/${encodeURIComponent(base)}/` : undefined;
+}
+
+/** Directory containing the project file, in either \ or / separated paths. */
+function dirnameFilePath(filePath: string): string {
+  const idx = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return idx >= 0 ? filePath.slice(0, idx) : filePath;
 }
 
 /**

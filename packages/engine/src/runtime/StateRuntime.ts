@@ -16,11 +16,11 @@ export class StateRuntime {
    * Set active state for current scene. Pass "default" or null to clear state.
    * Optional sceneId validates state applies to correct scene (prevents race conditions).
    */
-  setState(stateName: string | null, sceneId?: string): void {
+  setState(stateName: string | null, sceneId?: string): boolean {
     // Validate scene hasn't changed (race condition check)
     if (sceneId && this.currentScene?.id !== sceneId) {
       console.warn(`[StateRuntime] setState ignored: scene changed from ${sceneId} to ${this.currentScene?.id}`);
-      return;
+      return false;
     }
 
     if (stateName === "default") {
@@ -32,6 +32,7 @@ export class StateRuntime {
     if (this.notifyChange) {
       this.notifyChange();
     }
+    return true;
   }
 
   /**

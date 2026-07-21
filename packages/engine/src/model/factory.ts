@@ -66,6 +66,34 @@ const TYPE_DEFAULTS: Record<
     },
   },
   layer: { width: 1920, height: 1080, props: {} },
+  table: {
+    width: 400,
+    height: 160,
+    props: {
+      colWidths: [200, 200],
+      rowHeights: [40, 40, 40, 40],
+      cells: [
+        [{ text: "Header 1", bold: true }, { text: "Header 2", bold: true }],
+        [{ text: "" }, { text: "" }],
+        [{ text: "" }, { text: "" }],
+        [{ text: "" }, { text: "" }],
+      ],
+      borderColor: "#94a3b8",
+      borderWidth: 1,
+    },
+  },
+  line: {
+    width: 240,
+    height: 120,
+    props: {
+      x1: 0, y1: 0, x2: 1, y2: 1,
+      strokeColor: "#0f172a",
+      strokeWidth: 2,
+      startArrow: "none",
+      endArrow: "none",
+      dash: "solid",
+    },
+  },
   collection: {
     width: 900,
     height: 520,

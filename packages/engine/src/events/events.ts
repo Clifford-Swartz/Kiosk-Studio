@@ -15,6 +15,7 @@
  * - sessionEnd: Player unmount (exited Play/Kiosk mode)
  * - sceneEnter: Navigated to a scene (includes home scene on load)
  * - sceneExit: Leaving a scene (duration = time spent)
+ * - stateExit: Leaving a scene state via the setState action (duration = time spent)
  *
  * Interactions:
  * - elementTap: User tapped an element
@@ -41,6 +42,7 @@ export type EventKind =
   | "sessionEnd"
   | "sceneEnter"
   | "sceneExit"
+  | "stateExit"
   // Interactions
   | "elementTap"
   | "elementHover"
@@ -64,6 +66,7 @@ export type EventKind =
  *
  * - sceneEnter: { sceneId, sceneName }
  * - sceneExit: { sceneId, sceneName, duration }
+ * - stateExit: { sceneId, toState, duration } (sceneState field carries the state being left)
  * - elementTap: { elementId, elementType, sceneId }
  * - actionRun: { actionType, params, elementId }
  * - videoPlay: { elementId, currentTime }
@@ -83,6 +86,9 @@ export interface KioskEvent {
 
   /** Active scene ID (auto-injected by EventBus, always present) */
   sceneId: string;
+
+  /** Active scene state name at the time of the event (auto-injected by EventBus, null = default state) */
+  sceneState: string | null;
 
   /** Kind-specific event data */
   payload: Record<string, unknown>;

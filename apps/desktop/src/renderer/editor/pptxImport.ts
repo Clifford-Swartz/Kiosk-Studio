@@ -1,4 +1,5 @@
 import { createElement, createProject, createScene, newId, type Project } from "@kiosk/engine";
+import type { ParsedDeckWire } from "@kiosk/pptx";
 import { ensureProjectSaved } from "./assets.js";
 
 /**
@@ -6,22 +7,12 @@ import { ensureProjectSaved } from "./assets.js";
  * scene; texts → text elements, images → image elements (written into the
  * project's assets/), all scaled from slide px to the project canvas. Adds
  * invisible left/right edge tap zones that navigate prev/next (goToScene).
+ *
+ * `ParsedDeckWire` is the single source of truth for this shape (defined in
+ * @kiosk/pptx, alongside the IPC handler that produces it) — don't
+ * re-declare it here, the two copies will drift.
  */
-
-interface DeckLine {
-  text: string;
-  fontPt?: number; color?: string; bold?: boolean; italic?: boolean;
-  align?: "left" | "center" | "right";
-}
-interface DeckText {
-  x: number; y: number; width: number; height: number; text: string;
-  lines?: DeckLine[];
-  fontPt?: number; color?: string; bold?: boolean; italic?: boolean;
-  align?: "left" | "center" | "right";
-}
-interface DeckImage { x: number; y: number; width: number; height: number; ext: string; base64: string }
-interface DeckSlide { texts: DeckText[]; images: DeckImage[] }
-export interface ParsedDeck { slideW: number; slideH: number; slides: DeckSlide[] }
+export type ParsedDeck = ParsedDeckWire;
 
 /** Target canvas: keep the slide aspect, normalize to ~1920 wide. */
 function targetSize(slideW: number, slideH: number): { w: number; h: number; scale: number } {
@@ -52,6 +43,27 @@ export async function buildProjectFromDeck(
     deck.slides.map(async (slide, i) => {
       const elements = [];
 
+      // Background image (from theme/layout/master or the slide itself) sits
+      // behind everything else — laid down first so its zIndex is lowest.
+      if (slide.background?.image) {
+        try {
+          const rel = await window.kiosk.saveAsset(
+            projectPath,
+            `slide${i + 1}-bg.${slide.background.image.ext}`,
+            slide.background.image.base64
+          );
+          elements.push(
+            createElement("image", {
+              x: 0, y: 0, width: w, height: h,
+              zIndex: 0,
+              props: { src: rel, fit: "cover" },
+            })
+          );
+        } catch (err) {
+          console.warn(`[pptx import] Skipped background image on slide ${i + 1}:`, err);
+        }
+      }
+
       for (const t of slide.texts) {
         // pt → px (×1.333) then scale to canvas.
         const toPx = (pt?: number) => Math.round((pt ?? 18) * 1.333 * scale);
@@ -64,6 +76,7 @@ export async function buildProjectFromDeck(
           fontWeight: l.bold ? "700" : "normal",
           align: l.align ?? t.align ?? "left",
           ...(l.italic ? { fontStyle: "italic" } : {}),
+          ...(l.underline ? { textDecoration: "underline" } : {}),
         }));
         elements.push(
           createElement("text", {
@@ -77,24 +90,81 @@ export async function buildProjectFromDeck(
               fontWeight: t.bold ? "700" : "normal",
               align: t.align ?? "left",
               ...(t.italic ? { fontStyle: "italic" } : {}),
+              ...(t.underline ? { textDecoration: "underline" } : {}),
+              // Box-level fill/outline, same props.fill/props.border convention
+              // rectangle elements use (see ElementRenderer.tsx).
+              ...(t.fill ? { fill: t.fill } : {}),
+              ...(t.borderColor ? { border: `${t.borderWidth ?? 1}px solid ${t.borderColor}` } : {}),
             },
           })
         );
       }
 
-      for (const im of slide.images) {
-        // Persist the image into the project's assets/ and reference it.
-        const rel = await window.kiosk.saveAsset(projectPath, `slide${i + 1}.${im.ext}`, im.base64);
+      for (const [imIndex, im] of slide.images.entries()) {
+        // Persist the image into the project's assets/ and reference it. One
+        // failed write (disk full, bad bytes, etc.) shouldn't abort the whole
+        // import — skip just this image and keep the rest of the slide.
+        try {
+          const rel = await window.kiosk.saveAsset(projectPath, `slide${i + 1}-${imIndex + 1}.${im.ext}`, im.base64);
+          elements.push(
+            createElement("image", {
+              x: px(im.x), y: px(im.y), width: px(im.width), height: px(im.height),
+              zIndex: elements.length + 1,
+              props: {
+                src: rel,
+                // PowerPoint stretches a picture to fill its shape's box by
+                // default ("contain" was introducing letterboxing PowerPoint
+                // never shows); a real crop (below) supersedes this anyway.
+                fit: "fill",
+                ...(im.crop ? { crop: im.crop } : {}),
+                ...(im.borderColor ? { border: `${im.borderWidth ?? 1}px solid ${im.borderColor}` } : {}),
+              },
+            })
+          );
+        } catch (err) {
+          console.warn(`[pptx import] Skipped image ${imIndex + 1} on slide ${i + 1}:`, err);
+        }
+      }
+
+      for (const t of slide.tables) {
         elements.push(
-          createElement("image", {
-            x: px(im.x), y: px(im.y), width: px(im.width), height: px(im.height),
+          createElement("table", {
+            x: px(t.x), y: px(t.y), width: px(t.width), height: px(t.height),
             zIndex: elements.length + 1,
-            props: { src: rel, fit: "contain" },
+            props: {
+              colWidths: t.colWidths.map(px),
+              rowHeights: t.rowHeights.map(px),
+              cells: t.cells,
+              borderColor: t.borderColor,
+              borderWidth: t.borderWidth,
+            },
           })
         );
       }
 
-      return createScene({ id: `slide-${i + 1}-${newId("s")}`, name: `Slide ${i + 1}`, background: "#ffffff", elements });
+      for (const c of slide.connectors) {
+        elements.push(
+          createElement("line", {
+            x: px(c.x), y: px(c.y), width: px(c.width), height: px(c.height),
+            zIndex: elements.length + 1,
+            props: {
+              x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2,
+              strokeColor: c.strokeColor,
+              strokeWidth: c.strokeWidth,
+              startArrow: c.startArrow,
+              endArrow: c.endArrow,
+              dash: c.dash,
+            },
+          })
+        );
+      }
+
+      return createScene({
+        id: `slide-${i + 1}-${newId("s")}`,
+        name: `Slide ${i + 1}`,
+        background: slide.background?.color ?? "#ffffff",
+        elements,
+      });
     })
   );
 

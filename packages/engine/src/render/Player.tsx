@@ -52,6 +52,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const keyCounterRef = useRef(0);
   const sessionId = useMemo(() => crypto.randomUUID(), []);
   const sceneEnterTimeRef = useRef<number>(0);
+  // Time the active scene state was entered (default state on scene navigation,
+  // or the target of the most recent setState action). Mirrors sceneEnterTimeRef.
+  const stateEnterTimeRef = useRef<number>(0);
 
   // Session lifecycle: emit sessionStart on mount, sessionEnd on unmount
   useEffect(() => {
@@ -66,6 +69,13 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       imageLoadQueue.clear(); // Clear queue on Player unmount (session end)
     };
   }, [project.dataConnectors, sessionId]);
+
+  // Keep AnalyticsStore's project reference fresh for CSV scene/element name
+  // resolution, independent of the session-lifecycle effect above (editor
+  // renames shouldn't require restarting the analytics session).
+  useEffect(() => {
+    analyticsStore.setProject(project);
+  }, [project]);
 
   // Sync initialSceneId prop changes (for Canvas scene switching)
   // Issue 1 fix: Removed sceneLayers from deps to prevent infinite loop
@@ -108,6 +118,10 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const animationRuntime = useMemo(() => new AnimationRuntime(), []);
   const stateRuntime = useMemo(() => new StateRuntime(), []);
 
+  // Subscribe to element resolution (bindings + state + overrides + animations);
+  // re-render when they change. Hook must be called unconditionally (Rules of Hooks).
+  const resolveElement = elementResolver.useResolveElement();
+
   // Wire providers into ElementResolver (rendering pipeline)
   useEffect(() => {
     elementResolver.setStateProvider(stateRuntime);
@@ -130,7 +144,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     };
   }, [animationRuntime, stateRuntime]);
 
-  // Wire element lookup into AnimationRuntime (for resolving current values when from=undefined)
+  // Wire element lookup into AnimationRuntime (finds base schema element by id;
+  // AnimationRuntime resolves it through `resolveElement` to get the current
+  // rendered value — after bindings + state + interaction overrides — per ADR 0010).
   useEffect(() => {
     const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
     if (!activeScene) {
@@ -152,6 +168,11 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     animationRuntime.setElementLookup((id) => findElement(activeScene.elements, id));
   }, [sceneLayers, animationRuntime]);
+
+  useEffect(() => {
+    animationRuntime.setElementResolver(resolveElement);
+    return () => animationRuntime.setElementResolver(null);
+  }, [animationRuntime, resolveElement]);
 
   // Issue 6 fix: Extract transition execution to useCallback
   const executeTransition = useCallback(async (targetScene: Scene, newKey: string) => {
@@ -240,6 +261,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
       // Update scene tracking and emit sceneEnter
       sceneEnterTimeRef.current = Date.now();
+      stateEnterTimeRef.current = Date.now(); // Scene navigation resets to default state
       eventBus.setCurrentScene(targetScene.id);
       eventBus.emit({
         kind: "sceneEnter",
@@ -252,6 +274,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     // Update scene tracking and emit sceneEnter
     sceneEnterTimeRef.current = Date.now();
+    stateEnterTimeRef.current = Date.now(); // Scene navigation resets to default state
     eventBus.setCurrentScene(targetScene.id);
     eventBus.emit({
       kind: "sceneEnter",
@@ -355,7 +378,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         console.log(`[DEBUG-anim] PlayerContext.animate() wrapper completed`);
         return result;
       },
-      setState: async (stateName, animated, duration) => {
+      setState: async (stateName, animated, _duration) => {
         if (animated) {
           // Fade out, swap state, fade in
           const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
@@ -367,7 +390,20 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         }
         // Pass scene ID to validate state applies to correct scene
         const sceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
-        stateRuntime.setState(stateName, sceneId);
+        if (stateRuntime.setState(stateName, sceneId)) {
+          // Emit stateExit for the state being left, before switching (so the
+          // auto-injected sceneState reflects the previous state). Mirrors
+          // sceneExit's duration tracking in goToScene.
+          if (stateEnterTimeRef.current > 0) {
+            const duration = Date.now() - stateEnterTimeRef.current;
+            eventBus.emit({
+              kind: "stateExit",
+              payload: { sceneId, toState: stateName, duration }
+            });
+          }
+          eventBus.setActiveState(stateName);
+          stateEnterTimeRef.current = Date.now();
+        }
         // Wait for React to apply changes before continuing
         await new Promise(resolve => requestAnimationFrame(resolve));
       },
@@ -522,10 +558,6 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   useLayoutEffect(() => {
     bindingHost.clearCache();
   }, [project]);
-
-  // Subscribe to element resolution (bindings + overrides); re-render when they change.
-  // Hook must be called unconditionally (Rules of Hooks), even if live=false.
-  const resolveElement = elementResolver.useResolveElement();
 
   if (sceneLayers.length === 0) return <FatalMessage text="Project has no scenes." />;
 

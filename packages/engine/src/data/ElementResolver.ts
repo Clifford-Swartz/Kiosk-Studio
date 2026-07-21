@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { Binding, Element } from "../model/types.js";
 import { ANIMATABLE_PROPS } from "../runtime/PropertyRegistry.js";
 import { VisibilityManager } from "../runtime/VisibilityManager.js";
+import { eventBus } from "../events/EventBus.js";
 
 /**
  * External state provider (StateRuntime).
@@ -71,7 +72,7 @@ export interface OverrideHost {
 
 /**
  * Unified element resolver: combines binding resolution + override application
- * into a single pipeline with one cache. Consolidates BindingContext + OverrideStore.
+ * into a single pipeline with one cache.
  *
  * Rendering pipeline order (ADR 0010, ADR 0011):
  * 1. Project schema (base)
@@ -98,6 +99,17 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
   // Unified cache: element.id -> { version, resolved }
   // Caches the COMBINED result (bindings + state + overrides + animations)
   private cache = new Map<string, { version: number; resolved: Element }>();
+
+  constructor() {
+    eventBus.subscribe("dataChanged", this.onDataChanged);
+  }
+
+  private onDataChanged = (event: { payload: Record<string, unknown> }): void => {
+    const { sourceId, value } = event.payload;
+    if (typeof sourceId === "string") {
+      this.setValue(sourceId, value);
+    }
+  };
 
   // BindingHost methods
   setValue(sourceId: string, value: unknown): void {
@@ -315,7 +327,7 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
   }
 }
 
-// Helper functions (from original BindingContext)
+// Helper functions
 const GEOMETRY = new Set([
   ...ANIMATABLE_PROPS.flatMap((p) => p.fields),
   "zIndex", // Not animatable but still geometry

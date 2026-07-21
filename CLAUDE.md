@@ -18,19 +18,15 @@ Single-context layout: one `CONTEXT.md` + `docs/adr/` at the repo root for all p
 
 ## Architecture notes
 
-### Runtime contexts (future refactor)
+### Runtime contexts
 
-**Current state (2026-06):** `BindingContext` lives in `packages/engine/src/data/BindingContext.ts`, consolidating bindingStore + applyBindings + useBindings behind a single interface.
+**Current state (2026-07):** `ElementResolver` (`packages/engine/src/data/ElementResolver.ts`) is the single consolidated interface for the rendering pipeline — owns binding values and interaction overrides directly, and wires in `StateRuntime`/`AnimationRuntime` as external providers (`setStateProvider`/`setAnimationProvider`). `useResolveElement()` resolves all five pipeline layers (schema → bindings → state → overrides → animations) behind one call.
 
-**Future refactor trigger:** When a second runtime context emerges (likely InteractionRuntime, MediaContext, or AssetContext), consider extracting all contexts into `packages/engine/src/context/`:
-- `context/BindingContext.ts`
-- `context/InteractionRuntime.ts` (consolidates interactions.ts + overrideStore + applyOverrides)
-- `context/MediaContext.ts` (if media features expand: playback coordination, playlists, global volume)
-- `context/AssetContext.ts` (if asset handling grows: CDN switching, preloading, caching)
+The second and third runtime contexts anticipated below (state, animation) did emerge, but weren't extracted into a `context/` folder — they were absorbed as providers into `ElementResolver` instead (ADR 0010, ADR 0011). The older `BindingContext` + `overrideStore`/`applyOverrides`/`useOverrides` split was deleted 2026-07 (dead code, fully superseded by `ElementResolver`).
 
-**Principle:** Don't create the `context/` folder prematurely. Wait until at least two contexts exist, then refactor together.
+**Speculative refactor trigger:** If `MediaContext` or `AssetContext`-shaped concerns emerge (playback coordination/playlists, or CDN switching/preloading/caching), reassess whether they fit the same provider pattern as `StateRuntime`/`AnimationRuntime`, or warrant extraction into their own module.
 
-### BindingContext implementation lessons (2026-06)
+### ElementResolver implementation lessons (2026-06, orig. BindingContext)
 
 **Issue:** Initial consolidation broke video elements—src updates didn't apply, elements rendered wrong size.
 

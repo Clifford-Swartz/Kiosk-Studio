@@ -4,12 +4,13 @@ import type { EventKind, EventListener, KioskEvent, Unsubscribe } from "./events
  * Central event bus for all kiosk system events. Singleton, synchronous dispatch.
  *
  * Producers: Player, interactions.ts, ElementRenderer, data connectors
- * Consumers: BindingContext (dataChanged), AnalyticsStore (all events per sink config)
+ * Consumers: ElementResolver (dataChanged), AnalyticsStore (all events per sink config)
  *
  * EventBus auto-injects:
  * - timestamp (if missing from emitted event)
  * - sessionId (set by Player on mount)
  * - sceneId (tracked via setCurrentScene, always present)
+ * - sceneState (tracked via setActiveState, reset to null on setCurrentScene)
  *
  * Usage:
  *   eventBus.emit({ kind: "sceneEnter", payload: { sceneId, sceneName } });
@@ -19,6 +20,7 @@ class EventBusImpl {
   private listeners = new Map<EventKind, Set<EventListener>>();
   private sessionId: string = "";
   private currentSceneId: string = "";
+  private currentStateName: string | null = null;
 
   /**
    * Set the current session ID. Called by Player on mount.
@@ -29,20 +31,31 @@ class EventBusImpl {
 
   /**
    * Set the current scene ID. Called by Player on navigation.
+   * Resets active state to default, mirroring StateRuntime's own reset on real navigation.
    */
   setCurrentScene(id: string): void {
     this.currentSceneId = id;
+    this.currentStateName = null;
+  }
+
+  /**
+   * Set the current scene state name. Called by Player when a setState action runs.
+   * Pass null (or "default") to clear back to the default state.
+   */
+  setActiveState(name: string | null): void {
+    this.currentStateName = name === "default" ? null : name;
   }
 
   /**
    * Emit an event to all subscribers of that event kind.
-   * Auto-injects timestamp, sessionId, sceneId if missing.
+   * Auto-injects timestamp, sessionId, sceneId, sceneState if missing.
    */
   emit(event: Partial<KioskEvent> & { kind: EventKind }): void {
     const fullEvent: KioskEvent = {
       timestamp: event.timestamp ?? Date.now(),
       sessionId: event.sessionId ?? this.sessionId,
       sceneId: event.sceneId ?? this.currentSceneId,
+      sceneState: event.sceneState ?? this.currentStateName,
       payload: event.payload ?? {},
       kind: event.kind,
     };
@@ -88,6 +101,7 @@ class EventBusImpl {
       "sessionEnd",
       "sceneEnter",
       "sceneExit",
+      "stateExit",
       "elementTap",
       "elementHover",
       "elementPress",
@@ -118,6 +132,7 @@ class EventBusImpl {
     this.listeners.clear();
     this.sessionId = "";
     this.currentSceneId = "";
+    this.currentStateName = null;
   }
 }
 

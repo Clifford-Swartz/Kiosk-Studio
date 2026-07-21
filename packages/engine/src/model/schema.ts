@@ -25,6 +25,8 @@ export const ElementTypeSchema = z.enum([
   "button",
   "layer",
   "collection",
+  "table",
+  "line",
 ]);
 
 export const TriggerKindSchema = z.enum([
@@ -64,6 +66,7 @@ export const EventKindSchema = z.enum([
   "sessionEnd",
   "sceneEnter",
   "sceneExit",
+  "stateExit",
   "elementTap",
   "elementHover",
   "elementPress",

@@ -53,7 +53,13 @@ const api = {
    */
   copyExternalFile: (externalPath: string): Promise<string> =>
     ipcRenderer.invoke("content:copyExternal", externalPath),
-  /** Show a .pptx open dialog + parse it; resolves to a ParsedDeck or null. */
+  /**
+   * Show a .pptx open dialog + parse it; resolves to a ParsedDeckWire or
+   * null (canceled, or the parse failed — main already showed an error
+   * dialog in that case). Typed `unknown` here because IPC gives no runtime
+   * guarantee the main process actually returned this shape — validate with
+   * `isParsedDeckWire` from @kiosk/pptx before use.
+   */
   importPptx: (): Promise<unknown | null> => ipcRenderer.invoke("pptx:import"),
 
   // --- live data ---
@@ -89,6 +95,15 @@ const api = {
   /** Write analytics data to file (CSV/JSON/JSONL). */
   writeAnalytics: (path: string, data: string, append: boolean): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke("analytics:write", path, data, append),
+
+  // --- AI chat ---
+  /** Forward a chat-completions request (messages + tool defs) to the main-process OpenAI proxy. */
+  sendChat: (messages: unknown[], tools: unknown[]): Promise<unknown> =>
+    ipcRenderer.invoke("ai:chat", messages, tools),
+  /** Whether an API key is currently configured (never returns the raw key). */
+  hasAiKey: (): Promise<boolean> => ipcRenderer.invoke("ai:getKey"),
+  /** Save the OpenAI API key (stored via electron-store in the main process). */
+  setAiKey: (key: string): Promise<void> => ipcRenderer.invoke("ai:setKey", key),
 };
 
 export type KioskApi = typeof api;

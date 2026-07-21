@@ -46,12 +46,12 @@ Central event pipeline for all kiosk system events. Every significant action flo
 
 **Event kinds:** `dataChanged` (connector values), `sceneEnter`/`sceneExit` (navigation), `sessionStart`/`sessionEnd` (Player lifecycle), `elementTap`/`elementHover` (interactions), `videoPlay`/`videoPause`/`videoComplete` (media), `actionRun` (interaction execution).
 
-Producers: Player, interactions.ts, ElementRenderer, data connectors. Consumers: BindingContext (subscribes to dataChanged), AnalyticsStore (buffers events per sink config). See ADR 0007.
+Producers: Player, interactions.ts, ElementRenderer, data connectors. Consumers: AnalyticsStore (buffers events per sink config). Note: `ElementResolver` is updated directly via `bindingHost.setValue()`, not via an EventBus subscription — see ADR 0007.
 
 ### Binding
 A connection from a data connector to an element property. Live data flows through bindings to update rendered elements without mutating the Project.
 
-**Architecture (2026-06):** BindingContext subscribes to EventBus `dataChanged` events. When connector emits new value → EventBus dispatches → BindingContext updates internal map → triggers React re-render → bound elements resolve with fresh data.
+**Architecture (2026-07):** `ElementResolver` (`packages/engine/src/data/ElementResolver.ts`) owns binding values, interaction overrides, and the wiring to `StateRuntime`/`AnimationRuntime`, resolving all five rendering-pipeline layers behind one `useResolveElement()` call. Subscribes to EventBus `dataChanged` events internally (constructor), same as the `BindingContext` it replaces. Replaces the earlier `BindingContext` + `overrideStore`/`applyOverrides`/`useOverrides` split (removed 2026-07 — dead code, unreferenced outside itself; its EventBus subscription had not been carried over to `ElementResolver` until this fix, so live data bindings were silently broken in between).
 
 **Contract:**
 - `targetProp` can be: geometry field (`x`, `y`, `width`, etc.), `props.key`, or bare key (treated as `props.key`)
@@ -291,6 +291,17 @@ eventBus.subscribe("dataChanged", (event) => {
 **CSV columns (flattened):** timestamp, sessionId, sceneId, kind, elementId?, elementType?, duration?, actionType?, sourceId?, error?. JSON.stringify nested objects in value column. Sparse (omit null/undefined).
 
 **REST batching:** POST array of events. No retry on failure (log error, drop batch). Optional headers field for auth. 10s timeout.
+
+**Known gaps / audit findings (2026-07):**
+
+- **CSV escaping incomplete.** `formatters.ts` `toCSV()` only quote-escapes the `value` column. `elementId`, `elementType`, `actionType`, `sourceId`, `error` are interpolated raw — a comma or quote in any of those (e.g. an `error` message) corrupts the row.
+- **REST flush interval is hardcoded, not configurable.** `AnalyticsStore.init()` starts a 30s timer for `rest`-kind sinks, but `RestConnectorDefSchema.output` has no `flushIntervalMs` field and the Sinks UI hides the flush-interval control for REST — schema/UI/runtime disagree.
+- **No crash-safety.** Buffers are purely in-memory; a hard process kill (not a clean `Player` unmount) loses up to one flush interval / `maxBufferSize` worth of events. `flushAll()` only runs on `sessionEnd`, which fires from React unmount, not from an Electron `before-quit`/window-close hook.
+- **Export failures are silent.** CSV/JSON/JSONL IPC writes and REST POSTs `.catch(console.error)` on failure with no retry, no re-buffering, and no UI-visible error — data is dropped permanently on any transient disk/network error.
+- **Packaged-app file location differs from every other artifact.** The `analytics:write` IPC handler resolves relative sink paths against Electron's `app.getPath("userData")` (e.g. `%AppData%\Roaming\<app>\` on Windows), not `getAppRoot()` like `Exports/` and `user-content/` use. A sink path of `analytics/session.csv` lands somewhere the user won't think to look.
+- **Absolute paths outside `userData`/`temp` are silently rejected.** The IPC handler returns `{success:false}` for those paths with no surfacing in the Sinks panel UI — a misconfigured sink just never writes, with no feedback.
+- **New sinks default to `events: []`** (record nothing) until the user manually checks event kinds in `DataSourcesPanel` — an easy no-op trap.
+- **`sendData` interaction action is an unimplemented stub** (`interactions.ts`) — reserved for pushing ad hoc data into a sink/REST target, not yet wired up.
 
 ---
 

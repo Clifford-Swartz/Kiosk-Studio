@@ -26,15 +26,8 @@ export type { KioskEvent, EventKind, EventListener, Unsubscribe } from "./events
 
 // Analytics: event buffering and export (CSV, JSON, REST, console).
 export { analyticsStore } from "./analytics/AnalyticsStore.js";
+export type { SinkStatus } from "./analytics/AnalyticsStore.js";
 
 // Element resolution: unified bindings + overrides pipeline.
 export { elementResolver, bindingHost, overrideHost } from "./data/ElementResolver.js";
 export type { ElementResolver, BindingHost, OverrideHost } from "./data/ElementResolver.js";
-
-// DEPRECATED: Use elementResolver instead (consolidated interface).
-// These will be removed in a future version.
-export { bindingContext } from "./data/BindingContext.js";
-export type { BindingContext } from "./data/BindingContext.js";
-export { overrideStore, OverrideStore } from "./runtime/overrideStore.js";
-export { applyOverrides } from "./runtime/applyOverrides.js";
-export { useOverrides } from "./runtime/useOverrides.js";

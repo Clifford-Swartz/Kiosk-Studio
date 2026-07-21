@@ -204,25 +204,40 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     case "image": {
       const imageSrc = resolveSrc(str(props.src, ""), assetBaseUrl);
       const isReady = imageLoadQueue.useImageReady(imageSrc, zIndex ?? 0);
+      const border = str(props.border, "none");
+      const crop = props.crop as { left: number; top: number; right: number; bottom: number } | undefined;
 
-      return (
+      const imgEl = (
         <img
-          data-element-id={element.id}
+          data-element-id={crop ? undefined : element.id}
           src={isReady ? imageSrc : PLACEHOLDER_FALLBACK}
           alt={str(props.alt, "")}
           draggable={false}
           decoding="async"
           loading="lazy"
-          style={{
-            ...baseStyle,
-            objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
-            transition: isReady ? "opacity 0.2s ease-in" : "none",
-          }}
-          onClick={handleClick}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
+          style={
+            crop
+              ? {
+                  position: "absolute",
+                  left: `${(-crop.left / (1 - crop.left - crop.right)) * 100}%`,
+                  top: `${(-crop.top / (1 - crop.top - crop.bottom)) * 100}%`,
+                  width: `${(1 / (1 - crop.left - crop.right)) * 100}%`,
+                  height: `${(1 / (1 - crop.top - crop.bottom)) * 100}%`,
+                  objectFit: "fill",
+                  transition: isReady ? "opacity 0.2s ease-in" : "none",
+                }
+              : {
+                  ...baseStyle,
+                  objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
+                  border,
+                  transition: isReady ? "opacity 0.2s ease-in" : "none",
+                }
+          }
+          onClick={crop ? undefined : handleClick}
+          onMouseEnter={crop ? undefined : handleMouseEnter}
+          onMouseLeave={crop ? undefined : handleMouseLeave}
+          onPointerDown={crop ? undefined : handlePointerDown}
+          onPointerUp={crop ? undefined : handlePointerUp}
           onError={(e) => {
             // If bundled placeholder fails to load, fall back to embedded SVG
             const target = e.currentTarget;
@@ -232,6 +247,129 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
             }
           }}
         />
+      );
+
+      if (!crop) return imgEl;
+
+      // Cropped images need an overflow:hidden viewport at the element's own
+      // box; the <img> inside is oversized/offset so only the cropped region
+      // shows through, so interaction handlers live on the wrapper instead.
+      return (
+        <div
+          data-element-id={element.id}
+          style={{ ...baseStyle, overflow: "hidden", border }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
+          {imgEl}
+        </div>
+      );
+    }
+
+    case "table": {
+      const colWidths = (props.colWidths as number[] | undefined) ?? [];
+      const rowHeights = (props.rowHeights as number[] | undefined) ?? [];
+      const cells = (props.cells as ({ text: string; fill?: string; color?: string; bold?: boolean; align?: "left" | "center" | "right"; colSpan?: number; rowSpan?: number } | null)[][] | undefined) ?? [];
+      const cellBorder = `${num(props.borderWidth, 1)}px solid ${str(props.borderColor, "#94a3b8")}`;
+
+      return (
+        <div
+          data-element-id={element.id}
+          style={{
+            ...baseStyle,
+            display: "grid",
+            gridTemplateColumns: colWidths.map((w) => `${w}px`).join(" "),
+            gridTemplateRows: rowHeights.map((h) => `${h}px`).join(" "),
+          }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
+          {cells.map((row, r) =>
+            row.map((cell, c) => {
+              if (!cell) return null;
+              return (
+                <div
+                  key={`${r}-${c}`}
+                  style={{
+                    gridColumn: `${c + 1} / span ${cell.colSpan ?? 1}`,
+                    gridRow: `${r + 1} / span ${cell.rowSpan ?? 1}`,
+                    background: cell.fill ?? "transparent",
+                    color: cell.color ?? "#0f172a",
+                    fontWeight: cell.bold ? "700" : "normal",
+                    textAlign: cell.align ?? "left",
+                    border: cellBorder,
+                    padding: "4px 8px",
+                    overflow: "hidden",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {cell.text}
+                </div>
+              );
+            })
+          )}
+        </div>
+      );
+    }
+
+    case "line": {
+      const x1 = num(props.x1, 0) * width;
+      const y1 = num(props.y1, 0) * height;
+      const x2 = num(props.x2, 1) * width;
+      const y2 = num(props.y2, 1) * height;
+      const strokeColor = str(props.strokeColor, "#0f172a");
+      const strokeWidth = num(props.strokeWidth, 2);
+      const startArrow = str(props.startArrow, "none") === "triangle";
+      const endArrow = str(props.endArrow, "none") === "triangle";
+      const dash = str(props.dash, "solid");
+      const strokeDasharray = dash === "dash" ? `${strokeWidth * 3},${strokeWidth * 2}` : dash === "dot" ? `${strokeWidth},${strokeWidth * 2}` : undefined;
+      const markerId = `arrow-${element.id}`;
+      // A perfectly horizontal/vertical connector has a zero-width or
+      // zero-height box — but per the SVG spec, width=0 or height=0 on the
+      // <svg> element disables rendering of its ENTIRE subtree, regardless of
+      // overflow:visible. Clamp just the viewport (not the line's own x1/y1/
+      // x2/y2 math above, which still uses the true width/height) so the box
+      // itself stays a valid non-zero rendering surface.
+      const svgWidth = Math.max(width, 1);
+      const svgHeight = Math.max(height, 1);
+
+      return (
+        <svg
+          data-element-id={element.id}
+          width={svgWidth}
+          height={svgHeight}
+          style={{ ...baseStyle, width: svgWidth, height: svgHeight, overflow: "visible" }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
+          {(startArrow || endArrow) && (
+            <defs>
+              <marker id={`${markerId}-start`} markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto-start-reverse">
+                <path d="M0,0 L8,4 L0,8 Z" fill={strokeColor} />
+              </marker>
+              <marker id={`${markerId}-end`} markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill={strokeColor} />
+              </marker>
+            </defs>
+          )}
+          <line
+            x1={x1} y1={y1} x2={x2} y2={y2}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={strokeDasharray}
+            markerStart={startArrow ? `url(#${markerId}-start)` : undefined}
+            markerEnd={endArrow ? `url(#${markerId}-end)` : undefined}
+          />
+        </svg>
       );
     }
 
@@ -861,6 +999,7 @@ interface TextRun {
   color?: string;
   fontWeight?: string;
   fontStyle?: string;
+  textDecoration?: string;
   align?: "left" | "center" | "right";
 }
 
@@ -905,6 +1044,7 @@ function TextElement({
   const baseFontSize = num(props.fontSize, 32);
   const baseWeight = str(props.fontWeight, "normal");
   const baseFontStyle = str(props.fontStyle, "normal");
+  const baseTextDecoration = str(props.textDecoration, "none");
   const runs = parseRuns(props.runs);
 
   const innerRef = React.useRef<HTMLDivElement>(null);
@@ -940,7 +1080,11 @@ function TextElement({
         color: baseColor,
         fontWeight: baseWeight,
         fontStyle: baseFontStyle,
+        textDecoration: baseTextDecoration,
         fontFamily: str(props.fontFamily, "system-ui, sans-serif"),
+        // Same props.fill/props.border convention as the rectangle element.
+        backgroundColor: str(props.fill, "transparent"),
+        border: str(props.border, "none"),
         // Column flex: alignItems honors horizontal alignment; top-anchored
         // (flex-start) to match PowerPoint's default text-box anchoring and
         // keep multi-line bodies reading from the top.
@@ -973,6 +1117,7 @@ function TextElement({
                 lineHeight: blank ? 0.5 : LINE_HEIGHT,
                 fontWeight: r.fontWeight ?? baseWeight,
                 fontStyle: r.fontStyle ?? baseFontStyle,
+                textDecoration: r.textDecoration ?? baseTextDecoration,
                 textAlign: (r.align ?? align) as React.CSSProperties["textAlign"],
               }}
             >
@@ -986,29 +1131,67 @@ function TextElement({
   );
 }
 
+/** Like `str`/`num` but for an optional field with no sensible fallback value
+ * (the caller should just omit the field) — still warns when present-but-wrong. */
+function optStr(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "string") return v;
+  warnBadProp("string", v);
+  return undefined;
+}
+function optNum(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  warnBadProp("finite number", v);
+  return undefined;
+}
+
 /** Coerce an untyped `props.runs` into a clean TextRun[], or null if absent. */
 function parseRuns(v: unknown): TextRun[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   return v.map((raw) => {
     const o = (raw ?? {}) as Record<string, unknown>;
-    const run: TextRun = { text: typeof o.text === "string" ? o.text : "" };
-    if (typeof o.fontSize === "number") run.fontSize = o.fontSize;
-    if (typeof o.color === "string") run.color = o.color;
-    if (typeof o.fontWeight === "string") run.fontWeight = o.fontWeight;
-    if (typeof o.fontStyle === "string") run.fontStyle = o.fontStyle;
+    const run: TextRun = { text: str(o.text, "") };
+    const fontSize = optNum(o.fontSize);
+    if (fontSize !== undefined) run.fontSize = fontSize;
+    const color = optStr(o.color);
+    if (color !== undefined) run.color = color;
+    const fontWeight = optStr(o.fontWeight);
+    if (fontWeight !== undefined) run.fontWeight = fontWeight;
+    const fontStyle = optStr(o.fontStyle);
+    if (fontStyle !== undefined) run.fontStyle = fontStyle;
+    const textDecoration = optStr(o.textDecoration);
+    if (textDecoration !== undefined) run.textDecoration = textDecoration;
     if (o.align === "left" || o.align === "center" || o.align === "right") run.align = o.align;
+    else if (o.align !== undefined && o.align !== null) warnBadProp('"left" | "center" | "right"', o.align);
     return run;
   });
 }
 
 // --- small prop coercion helpers (props are Record<string, unknown>) -------
 
+/**
+ * Warn only when a prop was actually SET to something of the wrong type or
+ * shape — not when it was simply omitted (omission is normal; every element
+ * type has optional props). Omission silently falling back is fine; a
+ * present-but-malformed value silently falling back is how a broken import
+ * or a bad upstream write masquerades as "missing content" with no trail.
+ */
+function warnBadProp(expected: string, v: unknown): void {
+  console.warn(`[ElementRenderer] expected ${expected}, got`, v, "— using fallback.");
+}
 function str(v: unknown, fallback: string): string {
-  return typeof v === "string" ? v : fallback;
+  if (typeof v === "string") return v;
+  if (v !== undefined && v !== null) warnBadProp("string", v);
+  return fallback;
 }
 function num(v: unknown, fallback: number): number {
-  return typeof v === "number" ? v : fallback;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v !== undefined && v !== null) warnBadProp("finite number", v);
+  return fallback;
 }
 function bool(v: unknown, fallback: boolean): boolean {
-  return typeof v === "boolean" ? v : fallback;
+  if (typeof v === "boolean") return v;
+  if (v !== undefined && v !== null) warnBadProp("boolean", v);
+  return fallback;
 }

@@ -4,6 +4,7 @@ import { PropertiesPanel } from "./PropertiesPanel.js";
 import { StatesPanel } from "./StatesPanel.js";
 import { SidebarTabs } from "./SidebarTabs.js";
 import { TopBar } from "./TopBar.js";
+import { AiChatPanel } from "./AiChatPanel.js";
 import { useUndoRedo } from "./useUndoRedo.js";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.js";
 import { useEditor } from "./store.js";
@@ -87,6 +88,7 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
   onExport: () => void;
 }) {
   const { undo, redo, pauseCapture, resumeCapture, canUndo, canRedo } = useUndoRedo();
+  const [aiOpen, setAiOpen] = React.useState(false);
 
   const selectedId = useEditor((s) => s.selectedId);
   const selectedIds = useEditor((s) => s.selectedIds);
@@ -209,11 +211,12 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
 
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#0b1016" }}>
-      <TopBar onPlay={onPlay} onKiosk={onKiosk} onSave={onSave} onSaveAs={onSaveAs} onOpen={onOpen} onImportPptx={onImportPptx} onExport={onExport} onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
+      <TopBar onPlay={onPlay} onKiosk={onKiosk} onSave={onSave} onSaveAs={onSaveAs} onOpen={onOpen} onImportPptx={onImportPptx} onExport={onExport} onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} onToggleAi={() => setAiOpen((v) => !v)} aiOpen={aiOpen} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <SidebarTabs />
         <Canvas pauseCapture={pauseCapture} resumeCapture={resumeCapture} />
         <RightToolbar />
+        {aiOpen && <AiChatPanel pauseCapture={pauseCapture} resumeCapture={resumeCapture} />}
       </div>
     </div>
   );

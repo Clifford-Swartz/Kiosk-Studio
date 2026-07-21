@@ -236,20 +236,22 @@ function TypeFields({
               {([
                 { key: "bold", label: "B", active: str(p.fontWeight, "normal") === "bold", weight: 700 as const },
                 { key: "italic", label: "I", active: str(p.fontStyle, "normal") === "italic", weight: 400 as const },
+                { key: "underline", label: "U", active: str(p.textDecoration, "none") === "underline", weight: 400 as const },
               ] as const).map((btn) => (
                 <button
                   key={btn.key}
-                  onClick={() =>
-                    btn.key === "bold"
-                      ? set("fontWeight", btn.active ? "normal" : "bold")
-                      : set("fontStyle", btn.active ? "normal" : "italic")
-                  }
+                  onClick={() => {
+                    if (btn.key === "bold") set("fontWeight", btn.active ? "normal" : "bold");
+                    else if (btn.key === "italic") set("fontStyle", btn.active ? "normal" : "italic");
+                    else set("textDecoration", btn.active ? "none" : "underline");
+                  }}
                   style={{
                     ...input,
                     flex: 1,
                     cursor: "pointer",
                     fontWeight: btn.weight,
                     fontStyle: btn.key === "italic" ? "italic" : "normal",
+                    textDecoration: btn.key === "underline" ? "underline" : "none",
                     background: btn.active ? "#2563eb" : "#161c26",
                     color: btn.active ? "#fff" : "#e2e8f0",
                     border: btn.active ? "1px solid #1d4ed8" : "1px solid #232c3a",

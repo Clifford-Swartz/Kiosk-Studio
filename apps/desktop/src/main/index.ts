@@ -1,12 +1,16 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, webContents, screen, Menu } from "electron";
 import { getConnectorFactory, type Connector, type ConnectorValue, type SourceSpec } from "@kiosk/connectors";
-import { parsePptx } from "@kiosk/pptx";
+import { parsePptx, toWireDeck } from "@kiosk/pptx";
+import Store from "electron-store";
 import { appendFileSync, createReadStream } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir, appendFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
+
+/** Local settings (API key, etc.) — not part of any saved project. */
+const settingsStore = new Store<{ openaiApiKey?: string }>({ name: "kiosk-settings" });
 
 /**
  * Custom protocol for serving project assets. Using file:// directly fails in
@@ -516,29 +520,30 @@ async function pickImage(): Promise<{ name: string; base64: string } | null> {
 
 /**
  * Show a .pptx open dialog, parse it, and return the deck with image bytes
- * base64-encoded (for IPC). Null if canceled. Heavy parse runs here in Node.
+ * base64-encoded (for IPC). Null if canceled or the parse fails. Heavy parse
+ * runs here in Node.
  */
-async function importPptx(): Promise<unknown | null> {
+async function importPptx(): Promise<ReturnType<typeof toWireDeck> | null> {
   const result = await dialog.showOpenDialog({
     title: "Import PowerPoint",
     properties: ["openFile"],
     filters: [{ name: "PowerPoint", extensions: ["pptx"] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  const buf = await readFile(result.filePaths[0]!);
-  const deck = parsePptx(new Uint8Array(buf));
-  // Serialize image bytes as base64 so they survive the IPC boundary.
-  return {
-    slideW: deck.slideW,
-    slideH: deck.slideH,
-    slides: deck.slides.map((s) => ({
-      texts: s.texts,
-      images: s.images.map((im) => ({
-        x: im.x, y: im.y, width: im.width, height: im.height, ext: im.ext,
-        base64: Buffer.from(im.bytes).toString("base64"),
-      })),
-    })),
-  };
+  try {
+    const buf = await readFile(result.filePaths[0]!);
+    const deck = parsePptx(new Uint8Array(buf));
+    return toWireDeck(deck);
+  } catch (err) {
+    console.error(`[pptx:import] Failed to parse ${result.filePaths[0]}:`, err);
+    await dialog.showMessageBox({
+      type: "error",
+      title: "PowerPoint Import Failed",
+      message: `Could not read this PowerPoint file: ${err instanceof Error ? err.message : String(err)}`,
+      buttons: ["OK"],
+    });
+    return null;
+  }
 }
 
 /**
@@ -711,6 +716,51 @@ async function exportProject(
       buttons: ["OK"],
     });
     return null;
+  }
+}
+
+// --- AI chat proxy ---------------------------------------------------------
+// Main process holds the OpenAI API key (electron-store, never sent back to
+// the renderer). The renderer drives the agentic tool-call loop itself; this
+// handler is a dumb proxy — forward messages+tools, return the raw response.
+
+function getAiKey(): string | null {
+  return settingsStore.get("openaiApiKey") ?? null;
+}
+
+function setAiKey(_e: unknown, key: string): void {
+  settingsStore.set("openaiApiKey", key);
+}
+
+async function aiChat(
+  _e: unknown,
+  messages: unknown[],
+  tools: unknown[]
+): Promise<{ error: string } | Record<string, unknown>> {
+  const apiKey = getAiKey();
+  if (!apiKey) return { error: "No OpenAI API key configured." };
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages,
+        ...(tools.length > 0 ? { tools } : {}),
+      }),
+    });
+
+    const json = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      return { error: `OpenAI API error (${res.status}): ${JSON.stringify(json)}` };
+    }
+    return json;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -931,6 +981,10 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(absPath).toString());
   });
 
+  ipcMain.handle("ai:chat", aiChat);
+  ipcMain.handle("ai:getKey", () => (getAiKey() ? true : false));
+  ipcMain.handle("ai:setKey", setAiKey);
+
   ipcMain.handle("project:load", loadProject);
   ipcMain.handle("project:pick", pickProject);
   ipcMain.handle("project:save", saveProject);
@@ -951,19 +1005,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("kiosk:info", () => ({ kiosk: IS_KIOSK, projectPath: KIOSK_PROJECT }));
   ipcMain.handle("analytics:write", async (_e, path: string, data: string, appendMode: boolean) => {
     try {
-      // Resolve to absolute path (relative paths are resolved against userData)
-      const absPath = isAbsolute(path) ? normalize(path) : join(app.getPath("userData"), path);
+      // Resolve to absolute path (relative paths are resolved against the app root,
+      // matching Exports/ and user-content/, so users find sink files next to the app).
+      const appRoot = getAppRoot();
+      const absPath = isAbsolute(path) ? normalize(path) : join(appRoot, path);
 
-      // Security: Validate path is within safe boundaries (userData or temp)
+      // Security: Validate path is within safe boundaries (app root, userData, or temp)
       const userDataDir = app.getPath("userData");
       const tempDir = app.getPath("temp");
+      const isInAppRoot = absPath.startsWith(appRoot);
       const isInUserData = absPath.startsWith(userDataDir);
       const isInTemp = absPath.startsWith(tempDir);
 
-      if (!isInUserData && !isInTemp) {
+      if (!isInAppRoot && !isInUserData && !isInTemp) {
         return {
           success: false,
-          error: `Path outside allowed directories. Must be in ${userDataDir} or ${tempDir}`
+          error: `Path outside allowed directories. Must be in ${appRoot}, ${userDataDir}, or ${tempDir}`
         };
       }
 

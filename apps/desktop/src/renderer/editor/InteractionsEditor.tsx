@@ -1,6 +1,7 @@
 import { type CSSProperties } from "react";
-import type { Action, ActionType } from "@kiosk/engine";
+import type { Action, ActionType, ElementShape } from "@kiosk/engine";
 import { useEditor } from "./store.js";
+import { getEditableProps } from "./elementProps.js";
 
 /**
  * Recursively find an element by ID, including children of layers/collections.
@@ -289,44 +290,6 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
 }
 
 /**
- * Get editable properties for an element type.
- * Returns flat list (no geometry: no x, y, width, height, rotation, opacity, zIndex).
- */
-function getEditableProps(type: string): { key: string; label: string; valueType: "color" | "number" | "text" }[] {
-  switch (type) {
-    case "text":
-      return [
-        { key: "text", label: "Text", valueType: "text" },
-        { key: "fontSize", label: "Font Size", valueType: "number" },
-        { key: "color", label: "Text Color", valueType: "color" },
-      ];
-    case "rectangle":
-      return [
-        { key: "fill", label: "Fill Color", valueType: "color" },
-        { key: "radius", label: "Border Radius", valueType: "number" },
-      ];
-    case "button":
-      return [
-        { key: "label", label: "Label", valueType: "text" },
-        { key: "fill", label: "Fill Color", valueType: "color" },
-        { key: "color", label: "Text Color", valueType: "color" },
-        { key: "radius", label: "Border Radius", valueType: "number" },
-      ];
-    case "video":
-      return [
-        { key: "volume", label: "Volume", valueType: "number" },
-        { key: "playbackRate", label: "Playback Speed", valueType: "number" },
-      ];
-    case "audio":
-      return [
-        { key: "volume", label: "Volume", valueType: "number" },
-      ];
-    default:
-      return [];
-  }
-}
-
-/**
  * Smart value input: switches between color picker, number input, or textarea
  * based on property type. Updates immediately (cheap React conditional render).
  */
@@ -392,11 +355,11 @@ function ActionRow({
 }: {
   action: Action;
   scenes: { id: string; name: string }[];
-  targets: { id: string; type: string; name?: string }[];
+  targets: ElementShape[];
   onChange: (patch: Partial<Action>) => void;
   onRemove: () => void;
 }) {
-  const p = action.params;
+  const p = action.params as Record<string, any>;
   const setParam = (k: string, v: unknown) => onChange({ params: { ...p, [k]: v } });
   const targetLabel = (t: { id: string; type: string; name?: string }) => t.name || `${t.type} (${t.id.slice(0, 6)})`;
   const videoElements = targets.filter((t) => t.type === "video");
