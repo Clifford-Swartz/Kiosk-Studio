@@ -178,7 +178,7 @@ export async function buildProjectFromDeck(
         createElement("rectangle", {
           name: "▶ next", x: w - zoneW, y: 0, width: zoneW, height: h, zIndex: 9998,
           props: { fill: "rgba(0,0,0,0.001)" },
-          interactions: [{ id: newId("int"), trigger: "tap", actions: [{ type: "goToScene", params: { sceneId: next.id } }] }],
+          interactions: [{ id: newId("int"), trigger: "tap", actions: [{ id: newId("act"), type: "goToScene", params: { sceneId: next.id } }] }],
         })
       );
     }
@@ -187,7 +187,7 @@ export async function buildProjectFromDeck(
         createElement("rectangle", {
           name: "◀ prev", x: 0, y: 0, width: zoneW, height: h, zIndex: 9998,
           props: { fill: "rgba(0,0,0,0.001)" },
-          interactions: [{ id: newId("int"), trigger: "tap", actions: [{ type: "goToScene", params: { sceneId: prev.id } }] }],
+          interactions: [{ id: newId("int"), trigger: "tap", actions: [{ id: newId("act"), type: "goToScene", params: { sceneId: prev.id } }] }],
         })
       );
     }

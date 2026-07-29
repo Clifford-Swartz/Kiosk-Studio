@@ -468,15 +468,20 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     const allElements = collectAllElements(scene.elements);
 
-    // Run enterScene interactions sequentially to avoid setState races
+    // Different elements' enterScene interactions run concurrently (matches
+    // tap/hover/press, where each element's handler is already independent).
+    // Each element's own interactions still run sequentially relative to
+    // each other, same as handleTap below.
     const runEnterSceneInteractions = async () => {
-      for (const element of allElements) {
-        for (const interaction of element.interactions) {
-          if (interaction.trigger === "enterScene") {
-            await runInteraction(interaction, ctx, element);
+      await Promise.all(
+        allElements.map(async (element) => {
+          for (const interaction of element.interactions) {
+            if (interaction.trigger === "enterScene") {
+              await runInteraction(interaction, ctx, element);
+            }
           }
-        }
-      }
+        })
+      );
     };
     runEnterSceneInteractions();
 

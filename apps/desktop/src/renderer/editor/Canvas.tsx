@@ -85,22 +85,24 @@ function textPropFor(type: string): "text" | "label" {
  * Recursively flatten all elements including children of layers.
  * Converts child coordinates from relative to absolute by accumulating parent offsets.
  */
-function flattenElements(elements: Element[], parentX = 0, parentY = 0): Element[] {
+function flattenElements(elements: Element[], parentX = 0, parentY = 0, parentLocked = false): Element[] {
   const result: Element[] = [];
   for (const el of elements) {
+    const effectiveLocked = parentLocked || (el.locked ?? false);
     if (el.type !== "layer") {
-      // Non-layer elements: add with absolute coordinates
+      // Non-layer elements: add with absolute coordinates and inherited lock state
       result.push({
         ...el,
         x: el.x + parentX,
         y: el.y + parentY,
+        locked: effectiveLocked,
       });
     }
     if (el.children) {
-      // Layer elements: recurse with accumulated offset
+      // Layer elements: recurse with accumulated offset and lock state
       const offsetX = el.type === "layer" ? el.x : 0;
       const offsetY = el.type === "layer" ? el.y : 0;
-      result.push(...flattenElements(el.children, parentX + offsetX, parentY + offsetY));
+      result.push(...flattenElements(el.children, parentX + offsetX, parentY + offsetY, effectiveLocked));
     }
   }
   return result;
@@ -458,10 +460,10 @@ export function Canvas({
       drag.current = null;
       dragTargets.current = null;
       setGuides([]);
+    } finally {
+      // ALWAYS clean up listeners and resume capture, even if exception occurs above
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", endDrag);
-    } finally {
-      // ALWAYS resume capture, even if exception occurs above
       resumeCapture(); // Resume history tracking and capture final position
     }
   }).current;
@@ -680,6 +682,8 @@ export function Canvas({
             onPointerDown={(e) => {
               // Right-click should not interact with elements (used for pan)
               if (e.button === 2) return;
+              // Clear any stuck text-editing state before selecting/moving
+              exitTextEditing();
 
               const now = Date.now();
               const last = lastDown.current;
@@ -704,9 +708,9 @@ export function Canvas({
               transformOrigin: "center center",
               // Selected element gets mechanical priority (999999) to match visual priority
               zIndex: selectedId === el.id ? 999999 : el.zIndex,
-              // Hidden hit target only while editing (inline editor needs clicks)
-              // Selected elements keep active hit target for drag
-              pointerEvents: editingId === el.id ? "none" : "auto",
+              // Locked elements and elements being text-edited get no pointer events,
+              // so clicks fall through to the selectable element underneath.
+              pointerEvents: editingId === el.id || el.locked ? "none" : "auto",
               cursor: "move",
             }}
           />

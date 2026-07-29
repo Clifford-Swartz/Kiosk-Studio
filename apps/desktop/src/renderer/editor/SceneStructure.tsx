@@ -7,11 +7,11 @@ const TYPE_ICON: Record<string, string> = {
   image: "🖼",
   video: "▶",
   button: "⬭",
-  layer: "◫",
 };
 
 /**
- * 16x16 SVG icon showing element type + visual properties.
+ * 16x16 SVG icon showing element type + visual properties. Only rendered for
+ * actual elements (not layers — layers are containers, not visuals).
  * Rectangle → tiny rect with actual fill color
  * Text → "T" with actual text color
  * Video → ▶ with color hint
@@ -50,13 +50,6 @@ function SmartThumbnail({ element }: { element: { type: string; props: Record<st
       return (
         <svg width="16" height="16" viewBox="0 0 16 16">
           <polygon points="6,4 6,12 12,8" fill="#94a3b8" />
-        </svg>
-      );
-
-    case "layer":
-      return (
-        <svg width="16" height="16" viewBox="0 0 16 16">
-          <rect x="2" y="2" width="12" height="12" fill="none" stroke="#64748b" strokeWidth="1.5" />
         </svg>
       );
 
@@ -314,7 +307,7 @@ export function SceneStructure() {
               ...(isReorderTarget ? rowDropTarget : null),
               ...(isReparentTarget ? rowReparentTarget : null),
               opacity: dragIdx === i ? 0.4 : 1,
-              paddingLeft: 2 + depth * 16,
+              paddingLeft: 2 + depth * 8,
               cursor: "pointer",
             }}
           >
@@ -332,9 +325,11 @@ export function SceneStructure() {
             ) : (
               <span style={{ width: 14 }} />
             )}
-            <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <SmartThumbnail element={el} />
-            </span>
+            {!isLayer && (
+              <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <SmartThumbnail element={el} />
+              </span>
+            )}
             {isEditing ? (
               <input
                 ref={inputRef}

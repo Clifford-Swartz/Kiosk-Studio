@@ -232,6 +232,16 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
       return;
     }
 
+    case "parallel": {
+      const nested = action.params.actions;
+      if (!Array.isArray(nested)) {
+        warn("parallel action needs params.actions (array)");
+        return;
+      }
+      await Promise.all(nested.map((a) => runAction(a as Action, ctx, element)));
+      return;
+    }
+
     // Implemented in later milestones.
     case "sendData":
       warn(`action '${action.type}' is not implemented yet`);

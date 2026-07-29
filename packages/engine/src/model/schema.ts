@@ -52,6 +52,7 @@ export const ActionTypeSchema = z.enum([
   "seekVideo",
   "setVolume",
   "setSpeed",
+  "parallel",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -205,7 +206,23 @@ export const TransitionSchema = z.object({
 // Interactions & bindings
 // ---------------------------------------------------------------------------
 
+/** Short unique id. Duplicated from factory.ts's newId (not imported: factory.ts
+ * derives from types.ts, which derives from this file, so importing it back
+ * would cycle). */
+function genActionId(): string {
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `act-${rand}`;
+}
+
+/**
+ * A "parallel" action nests a batch of actions in `params.actions` that run
+ * concurrently instead of sequentially — see runAction() in interactions.ts.
+ */
 export const ActionSchema = z.object({
+  id: z.string().default(genActionId),
   type: ActionTypeSchema,
   /** Free-form per-action parameters (validated per-type in the runtime). */
   params: z.record(z.unknown()).default({}),

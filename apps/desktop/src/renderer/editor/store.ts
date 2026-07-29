@@ -3,6 +3,9 @@ import {
   createElement,
   createScene,
   newId,
+  mapActions,
+  filterActions,
+  removeActionById,
   type Action,
   type Binding,
   type DataConnectorDef,
@@ -150,9 +153,16 @@ export interface EditorState {
   // --- interactions (triggers & actions) ---
   addInteraction: (elementId: string, trigger: TriggerKind) => void;
   removeInteraction: (elementId: string, interactionId: string) => void;
-  addAction: (elementId: string, interactionId: string, action: Action) => void;
-  updateAction: (elementId: string, interactionId: string, index: number, patch: Partial<Action>) => void;
-  removeAction: (elementId: string, interactionId: string, index: number) => void;
+  /** parentActionId: append into that "parallel" group instead of the interaction's top-level list. */
+  addAction: (elementId: string, interactionId: string, action: Omit<Action, "id">, parentActionId?: string) => void;
+  updateAction: (elementId: string, interactionId: string, actionId: string, patch: Partial<Action>) => void;
+  removeAction: (elementId: string, interactionId: string, actionId: string) => void;
+  /** Reorder a top-level action within an interaction's action list (does not reach into "parallel" groups). */
+  reorderAction: (elementId: string, interactionId: string, actionId: string, toIndex: number) => void;
+  /** Wrap two top-level actions in a new "parallel" group. */
+  groupActions: (elementId: string, interactionId: string, actionIdA: string, actionIdB: string) => void;
+  /** Flatten a "parallel" group back into sequential siblings in its place. */
+  ungroupAction: (elementId: string, interactionId: string, groupActionId: string) => void;
 }
 
 /** Replace the active scene via a transform, returning a new scenes array. */
@@ -799,14 +809,16 @@ export const useEditor = create<EditorState>((set, get) => ({
 
       const scenes = state.project.scenes.filter((s) => s.id !== id);
 
-      // Break goToScene actions pointing to deleted scene
+      // Break goToScene actions pointing to deleted scene (including ones
+      // nested inside a "parallel" group)
       const cleanedScenes = scenes.map((scene) => ({
         ...scene,
         elements: scene.elements.map((el) => ({
           ...el,
           interactions: el.interactions.map((int) => ({
             ...int,
-            actions: int.actions.filter(
+            actions: filterActions(
+              int.actions,
               (act) => !(act.type === "goToScene" && act.params.sceneId === id)
             ),
           })),
@@ -1021,23 +1033,37 @@ export const useEditor = create<EditorState>((set, get) => ({
       };
     }),
 
-  addAction: (elementId, interactionId, action) =>
+  addAction: (elementId, interactionId, action, parentActionId) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
+      const withId = { ...action, id: newId("act") };
       return {
         project: withActiveScene(state, (scene) =>
           patchElement(scene, elementId, (el) => ({
             ...el,
-            interactions: el.interactions.map((i: Interaction) =>
-              i.id === interactionId ? { ...i, actions: [...i.actions, action] } : i
-            ),
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              if (parentActionId) {
+                return {
+                  ...i,
+                  actions: mapActions(i.actions, parentActionId, (group) => ({
+                    ...group,
+                    params: {
+                      ...group.params,
+                      actions: [...((group.params.actions as Action[]) ?? []), withId],
+                    },
+                  })),
+                };
+              }
+              return { ...i, actions: [...i.actions, withId] };
+            }),
           }))
         ),
         dirty: true,
       };
     }),
 
-  updateAction: (elementId, interactionId, index, patch) =>
+  updateAction: (elementId, interactionId, actionId, patch) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
       return {
@@ -1048,9 +1074,11 @@ export const useEditor = create<EditorState>((set, get) => ({
               i.id === interactionId
                 ? {
                     ...i,
-                    actions: i.actions.map((a: Action, idx: number) =>
-                      idx === index ? { ...a, ...patch, params: { ...a.params, ...(patch.params ?? {}) } } : a
-                    ),
+                    actions: mapActions(i.actions, actionId, (a) => ({
+                      ...a,
+                      ...patch,
+                      params: { ...a.params, ...(patch.params ?? {}) },
+                    })),
                   }
                 : i
             ),
@@ -1060,7 +1088,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       };
     }),
 
-  removeAction: (elementId, interactionId, index) =>
+  removeAction: (elementId, interactionId, actionId) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
       return {
@@ -1069,9 +1097,83 @@ export const useEditor = create<EditorState>((set, get) => ({
             ...el,
             interactions: el.interactions.map((i: Interaction) =>
               i.id === interactionId
-                ? { ...i, actions: i.actions.filter((_: Action, idx: number) => idx !== index) }
+                ? { ...i, actions: removeActionById(i.actions, actionId) }
                 : i
             ),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  reorderAction: (elementId, interactionId, actionId, toIndex) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const from = i.actions.findIndex((a) => a.id === actionId);
+              if (from === -1) return i;
+              const actions = [...i.actions];
+              const [moved] = actions.splice(from, 1);
+              actions.splice(Math.max(0, Math.min(toIndex, actions.length)), 0, moved);
+              return { ...i, actions };
+            }),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  /** Wrap two top-level actions in a new "parallel" group at actionIdA's position. */
+  groupActions: (elementId, interactionId, actionIdA, actionIdB) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const actionA = i.actions.find((a) => a.id === actionIdA);
+              const actionB = i.actions.find((a) => a.id === actionIdB);
+              if (!actionA || !actionB) return i;
+              const group: Action = {
+                id: newId("act"),
+                type: "parallel",
+                params: { actions: [actionA, actionB] },
+              };
+              return {
+                ...i,
+                actions: i.actions
+                  .filter((a) => a.id !== actionIdB)
+                  .map((a) => (a.id === actionIdA ? group : a)),
+              };
+            }),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  /** Splice a "parallel" group's nested actions back into the parent list in its place. */
+  ungroupAction: (elementId, interactionId, groupActionId) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const group = i.actions.find((a) => a.id === groupActionId);
+              if (!group || group.type !== "parallel") return i;
+              const nested = (group.params.actions as Action[]) ?? [];
+              return { ...i, actions: i.actions.flatMap((a) => (a.id === groupActionId ? nested : [a])) };
+            }),
           }))
         ),
         dirty: true,

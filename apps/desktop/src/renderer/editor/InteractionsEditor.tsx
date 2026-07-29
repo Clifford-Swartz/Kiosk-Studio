@@ -1,5 +1,12 @@
-import { type CSSProperties } from "react";
-import type { Action, ActionType, ElementShape } from "@kiosk/engine";
+import {
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+import type { Action, ActionType, ElementShape, Interaction, Project, Scene } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { getEditableProps } from "./elementProps.js";
 
@@ -35,16 +42,25 @@ function flattenAllElements(elements: any[]): any[] {
  * Triggers & Actions editor for the selected element. Lists the element's
  * interactions (trigger → actions); add a tap trigger, then add/configure
  * actions (Go to scene / Set property / Toggle visibility) with param forms.
- * Writes through the store; the Player runs these live.
+ * Actions collapse to a one-line icon+summary by default; drag a row's handle
+ * to reorder, or drop it on another row's middle zone to group them to run
+ * concurrently ("parallel"). Writes through the store; the Player runs these live.
  */
 export function InteractionsEditor({ elementId }: { elementId: string }) {
   const scene = useEditor((s) => s.activeScene());
   const project = useEditor((s) => s.project);
   const addInteraction = useEditor((s) => s.addInteraction);
   const removeInteraction = useEditor((s) => s.removeInteraction);
-  const addAction = useEditor((s) => s.addAction);
-  const updateAction = useEditor((s) => s.updateAction);
-  const removeAction = useEditor((s) => s.removeAction);
+
+  // Expanded (uncollapsed) action ids. Default collapsed keeps the panel scannable.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const el = findElementRecursive(scene.elements, elementId);
   if (!el) return null;
@@ -99,48 +115,16 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
                   <button style={{ ...miniBtn, marginLeft: "auto", color: "#fca5a5" }} onClick={() => removeInteraction(elementId, it.id)} title="Remove trigger">✕</button>
                 </div>
 
-                {it.actions.map((a: Action, idx: number) => (
-                  <ActionRow
-                    key={idx}
-                    action={a}
-                    scenes={project.scenes}
-                    targets={targets}
-                    onChange={(patch) => updateAction(elementId, it.id, idx, patch)}
-                    onRemove={() => removeAction(elementId, it.id, idx)}
-                  />
-                ))}
-
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const t = e.target.value as ActionType;
-                    if (!t) return;
-                    const videoElements = scene.elements.filter((e) => e.type === "video");
-                    const defaults: Record<string, unknown> =
-                      t === "goToScene" ? { sceneId: project.scenes[0]?.id }
-                      : t === "setProp" ? { target: otherElements[0]?.id ?? elementId, key: "text", value: "" }
-                      : t === "togglePlayPause" ? { target: videoElements[0]?.id ?? "" }
-                      : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
-                      : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
-                      : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
-                      : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
-                      : t === "setState" ? { stateName: "default", animated: false, duration: 300 }
-                      : { target: otherElements[0]?.id ?? elementId };
-                    addAction(elementId, it.id, { type: t, params: defaults });
-                  }}
-                  style={{ ...input, marginTop: 4 }}
-                >
-                  <option value="">+ Add action…</option>
-                  <option value="goToScene">Go to scene</option>
-                  <option value="setProp">Set property</option>
-                  <option value="toggle">Toggle visibility</option>
-                  <option value="animate">Animate property</option>
-                  <option value="setState">Change scene state</option>
-                  <option value="togglePlayPause">Toggle play/pause</option>
-                  <option value="seekVideo">Seek video to time</option>
-                  <option value="setVolume">Set volume</option>
-                  <option value="setSpeed">Set playback speed</option>
-                </select>
+                <ActionsSection
+                  elementId={elementId}
+                  interaction={it}
+                  scene={scene}
+                  project={project}
+                  targets={targets}
+                  otherElements={otherElements}
+                  expandedIds={expandedIds}
+                  toggleExpanded={toggleExpanded}
+                />
               </div>
             );
           }
@@ -169,89 +153,31 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
               {/* On Enter / On Press section */}
               <div style={section}>
                 <div style={sectionLabel}>On {isHover ? "Enter" : "Press"}</div>
-                {enter.actions.map((a: Action, idx: number) => (
-                  <ActionRow
-                    key={idx}
-                    action={a}
-                    scenes={project.scenes}
-                    targets={targets}
-                    onChange={(patch) => updateAction(elementId, enter.id, idx, patch)}
-                    onRemove={() => removeAction(elementId, enter.id, idx)}
-                  />
-                ))}
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const t = e.target.value as ActionType;
-                    if (!t) return;
-                    const videoElements = scene.elements.filter((e) => e.type === "video");
-                    const defaults: Record<string, unknown> =
-                      t === "goToScene" ? { sceneId: project.scenes[0]?.id }
-                      : t === "setProp" ? { target: otherElements[0]?.id ?? elementId, key: "text", value: "" }
-                      : t === "togglePlayPause" ? { target: videoElements[0]?.id ?? "" }
-                      : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
-                      : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
-                      : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
-                      : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
-                      : t === "setState" ? { stateName: "default", animated: false, duration: 300 }
-                      : { target: otherElements[0]?.id ?? elementId };
-                    addAction(elementId, enter.id, { type: t, params: defaults });
-                  }}
-                  style={{ ...input, marginTop: 4 }}
-                >
-                  <option value="">+ Add action…</option>
-                  <option value="goToScene">Go to scene</option>
-                  <option value="setProp">Set property</option>
-                  <option value="toggle">Toggle visibility</option>
-                  <option value="animate">Animate property</option>
-                  <option value="setState">Change scene state</option>
-                  <option value="togglePlayPause">Toggle play/pause</option>
-                  <option value="seekVideo">Seek video to time</option>
-                  <option value="setVolume">Set volume</option>
-                  <option value="setSpeed">Set playback speed</option>
-                </select>
+                <ActionsSection
+                  elementId={elementId}
+                  interaction={enter}
+                  scene={scene}
+                  project={project}
+                  targets={targets}
+                  otherElements={otherElements}
+                  expandedIds={expandedIds}
+                  toggleExpanded={toggleExpanded}
+                />
               </div>
 
               {/* On Exit / On Release section */}
               <div style={section}>
                 <div style={sectionLabel}>On {isHover ? "Exit" : "Release"}</div>
-                {exit.actions.map((a: Action, idx: number) => (
-                  <ActionRow
-                    key={idx}
-                    action={a}
-                    scenes={project.scenes}
-                    targets={targets}
-                    onChange={(patch) => updateAction(elementId, exit.id, idx, patch)}
-                    onRemove={() => removeAction(elementId, exit.id, idx)}
-                  />
-                ))}
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const t = e.target.value as ActionType;
-                    if (!t) return;
-                    const videoElements = scene.elements.filter((e) => e.type === "video");
-                    const defaults: Record<string, unknown> =
-                      t === "goToScene" ? { sceneId: project.scenes[0]?.id }
-                      : t === "setProp" ? { target: otherElements[0]?.id ?? elementId, key: "text", value: "" }
-                      : t === "togglePlayPause" ? { target: videoElements[0]?.id ?? "" }
-                      : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
-                      : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
-                      : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
-                      : { target: otherElements[0]?.id ?? elementId };
-                    addAction(elementId, exit.id, { type: t, params: defaults });
-                  }}
-                  style={{ ...input, marginTop: 4 }}
-                >
-                  <option value="">+ Add action…</option>
-                  <option value="goToScene">Go to scene</option>
-                  <option value="setProp">Set property</option>
-                  <option value="toggle">Toggle visibility</option>
-                  <option value="togglePlayPause">Toggle play/pause</option>
-                  <option value="seekVideo">Seek video to time</option>
-                  <option value="setVolume">Set volume</option>
-                  <option value="setSpeed">Set playback speed</option>
-                </select>
+                <ActionsSection
+                  elementId={elementId}
+                  interaction={exit}
+                  scene={scene}
+                  project={project}
+                  targets={targets}
+                  otherElements={otherElements}
+                  expandedIds={expandedIds}
+                  toggleExpanded={toggleExpanded}
+                />
               </div>
             </div>
           );
@@ -285,6 +211,512 @@ export function InteractionsEditor({ elementId }: { elementId: string }) {
         <option value="press">Press</option>
         <option value="enterScene">Enter scene</option>
       </select>
+    </div>
+  );
+}
+
+/**
+ * Icon shown for a collapsed action row's type.
+ */
+const ACTION_ICON: Record<string, string> = {
+  goToScene: "→",
+  setProp: "✎",
+  toggle: "👁",
+  animate: "◐",
+  setState: "◇",
+  togglePlayPause: "⏯",
+  seekVideo: "⏩",
+  setVolume: "🔊",
+  setSpeed: "⏱",
+  parallel: "⇶",
+};
+
+/**
+ * One-line human summary for a collapsed action row, substituting the
+ * actual target/scene/value so the row is scannable without expanding it.
+ */
+function summarizeAction(
+  action: Action,
+  targets: ElementShape[],
+  scenes: { id: string; name: string }[]
+): string {
+  const p = action.params as Record<string, any>;
+  const targetLabel = (id: unknown) => {
+    const t = targets.find((t) => t.id === id);
+    return t ? t.name || `${t.type} (${t.id.slice(0, 6)})` : "— choose —";
+  };
+
+  switch (action.type) {
+    case "goToScene": {
+      const s = scenes.find((s) => s.id === p.sceneId);
+      return `Go to "${s?.name ?? "— choose scene —"}"`;
+    }
+    case "setProp":
+      return `Set ${targetLabel(p.target)}.${p.key || "?"} = ${str(p.value) || "…"}`;
+    case "toggle":
+      return `Toggle visibility of ${targetLabel(p.target)}`;
+    case "animate": {
+      const to = typeof p.to === "object" && p.to !== null ? JSON.stringify(p.to) : str(p.to);
+      return `Animate ${targetLabel(p.target)}.${p.property || "opacity"} → ${to || "…"} (${typeof p.duration === "number" ? p.duration : 300}ms)`;
+    }
+    case "setState":
+      return `Change scene state to "${p.stateName || "default"}"`;
+    case "togglePlayPause":
+      return `Toggle play/pause on ${targetLabel(p.target)}`;
+    case "seekVideo":
+      return `Seek ${targetLabel(p.target)} to ${typeof p.time === "number" ? p.time : 0}s`;
+    case "setVolume":
+      return `Set volume of ${targetLabel(p.target)} to ${Math.round((typeof p.volume === "number" ? p.volume : 1) * 100)}%`;
+    case "setSpeed":
+      return `Set speed of ${targetLabel(p.target)} to ${typeof p.rate === "number" ? p.rate : 1}x`;
+    case "parallel":
+      return `Run ${Array.isArray(p.actions) ? p.actions.length : 0} actions together`;
+    default:
+      return action.type;
+  }
+}
+
+/**
+ * Shared "+ Add action…" dropdown, used at the top level of an interaction
+ * and inside a "Run together" group. Owns the default params for each type.
+ */
+function AddActionMenu({
+  scene,
+  project,
+  elementId,
+  otherElements,
+  onAdd,
+}: {
+  scene: Scene;
+  project: Project;
+  elementId: string;
+  otherElements: ElementShape[];
+  onAdd: (type: ActionType, defaults: Record<string, unknown>) => void;
+}) {
+  return (
+    <select
+      value=""
+      onChange={(e) => {
+        const t = e.target.value as ActionType;
+        if (!t) return;
+        const videoElements = scene.elements.filter((e) => e.type === "video");
+        const defaults: Record<string, unknown> =
+          t === "goToScene" ? { sceneId: project.scenes[0]?.id }
+          : t === "setProp" ? { target: otherElements[0]?.id ?? elementId, key: "text", value: "" }
+          : t === "togglePlayPause" ? { target: videoElements[0]?.id ?? "" }
+          : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
+          : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
+          : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
+          : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
+          : t === "setState" ? { stateName: "default", animated: false, duration: 300 }
+          : { target: otherElements[0]?.id ?? elementId };
+        onAdd(t, defaults);
+      }}
+      style={{ ...input, marginTop: 4 }}
+    >
+      <option value="">+ Add action…</option>
+      <option value="goToScene">Go to scene</option>
+      <option value="setProp">Set property</option>
+      <option value="toggle">Toggle visibility</option>
+      <option value="animate">Animate property</option>
+      <option value="setState">Change scene state</option>
+      <option value="togglePlayPause">Toggle play/pause</option>
+      <option value="seekVideo">Seek video to time</option>
+      <option value="setVolume">Set volume</option>
+      <option value="setSpeed">Set playback speed</option>
+    </select>
+  );
+}
+
+/**
+ * Row header shared by plain action rows and "Run together" group rows:
+ * drag handle + icon + one-line summary + move/remove controls. Clicking
+ * anywhere else on the row toggles the expanded field editor.
+ */
+function RowHeader({
+  icon,
+  label,
+  expanded,
+  onToggleExpand,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+  removeTitle,
+  showDragHandle = true,
+  extra,
+}: {
+  icon: string;
+  label: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onRemove: () => void;
+  removeTitle?: string;
+  showDragHandle?: boolean;
+  extra?: ReactNode;
+}) {
+  return (
+    <div style={rowHeaderStyle} onClick={onToggleExpand}>
+      {showDragHandle && <span style={dragHandle} title="Drag to reorder or group">⠿</span>}
+      <span style={{ fontSize: 12, flexShrink: 0 }}>{icon}</span>
+      <span style={summaryText} title={label}>{expanded ? "▾ " : "▸ "}{label}</span>
+      {extra}
+      <button
+        style={{ ...miniBtn, opacity: onMoveUp ? 1 : 0.25, cursor: onMoveUp ? "pointer" : "default" }}
+        disabled={!onMoveUp}
+        onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+        title="Move up"
+      >
+        ▲
+      </button>
+      <button
+        style={{ ...miniBtn, opacity: onMoveDown ? 1 : 0.25, cursor: onMoveDown ? "pointer" : "default" }}
+        disabled={!onMoveDown}
+        onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+        title="Move down"
+      >
+        ▼
+      </button>
+      <button
+        style={{ ...miniBtn, color: "#fca5a5" }}
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        title={removeTitle ?? "Remove action"}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/** Draggable row wrapper: applies drop-target/dragging visuals shared by every row shape. */
+function DraggableRow({
+  isDragging,
+  isReorderTarget,
+  isGroupTarget,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onMouseDown,
+  onMouseUp,
+  style,
+  children,
+}: {
+  isDragging: boolean;
+  isReorderTarget: boolean;
+  isGroupTarget: boolean;
+  draggable: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+  onDragLeave: () => void;
+  onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  onMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => void;
+  onMouseUp: () => void;
+  style: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onMouseDown={onMouseDown}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseUp}
+      style={{
+        ...style,
+        ...(isReorderTarget ? rowDropTarget : null),
+        ...(isGroupTarget ? rowGroupTarget : null),
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One interaction's action list: renders every top-level action (plain rows
+ * and "Run together" groups), owns drag-and-drop reorder/group state for
+ * this list, and the trailing "+ Add action…" menu.
+ *
+ * Drag zones mirror SceneStructure.tsx: top/bottom 25% of a row = reorder,
+ * middle 50% = group (only when the dragged action isn't itself a group —
+ * UI-created nesting is capped at depth 1).
+ */
+function ActionsSection({
+  elementId,
+  interaction,
+  scene,
+  project,
+  targets,
+  otherElements,
+  expandedIds,
+  toggleExpanded,
+}: {
+  elementId: string;
+  interaction: Interaction;
+  scene: Scene;
+  project: Project;
+  targets: ElementShape[];
+  otherElements: ElementShape[];
+  expandedIds: Set<string>;
+  toggleExpanded: (id: string) => void;
+}) {
+  const addAction = useEditor((s) => s.addAction);
+  const updateAction = useEditor((s) => s.updateAction);
+  const removeAction = useEditor((s) => s.removeAction);
+  const reorderAction = useEditor((s) => s.reorderAction);
+  const groupActions = useEditor((s) => s.groupActions);
+  const ungroupAction = useEditor((s) => s.ungroupAction);
+
+  const actions = interaction.actions;
+
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [groupTargetId, setGroupTargetId] = useState<string | null>(null);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDraggableRef = useRef(false);
+
+  function resetDrag() {
+    setDragId(null);
+    setOverId(null);
+    setGroupTargetId(null);
+  }
+
+  function handleDrop() {
+    if (dragId === null) { resetDrag(); return; }
+    const dragged = actions.find((a) => a.id === dragId);
+    if (!dragged) { resetDrag(); return; }
+
+    if (groupTargetId && groupTargetId !== dragId) {
+      const target = actions.find((a) => a.id === groupTargetId);
+      if (target && dragged.type !== "parallel") {
+        if (target.type === "parallel") {
+          // Move the dragged action into the existing group.
+          removeAction(elementId, interaction.id, dragId);
+          addAction(elementId, interaction.id, { type: dragged.type, params: dragged.params }, groupTargetId);
+        } else {
+          groupActions(elementId, interaction.id, groupTargetId, dragId);
+        }
+      }
+    } else if (overId !== null && overId !== dragId) {
+      const toIndex = actions.findIndex((a) => a.id === overId);
+      if (toIndex !== -1) reorderAction(elementId, interaction.id, dragId, toIndex);
+    }
+    resetDrag();
+  }
+
+  function guardedToggle(id: string) {
+    // A completed drag shouldn't also toggle expand/collapse.
+    if (isDraggableRef.current) {
+      isDraggableRef.current = false;
+      return;
+    }
+    toggleExpanded(id);
+  }
+
+  function moveNested(group: Action, actionId: string, dir: -1 | 1) {
+    const arr = (group.params.actions as Action[]) ?? [];
+    const idx = arr.findIndex((a) => a.id === actionId);
+    const newIdx = idx + dir;
+    if (idx === -1 || newIdx < 0 || newIdx >= arr.length) return;
+    const next = [...arr];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    updateAction(elementId, interaction.id, group.id, { params: { actions: next } });
+  }
+
+  return (
+    <>
+      {actions.map((action, idx) => {
+        const isExpanded = expandedIds.has(action.id);
+        const isDragging = dragId === action.id;
+        const isReorderTarget = overId === action.id && dragId !== null && dragId !== action.id;
+        const isGroupTarget = groupTargetId === action.id;
+
+        const shared = {
+          isDragging,
+          isReorderTarget,
+          isGroupTarget,
+          draggable: isDraggableRef.current,
+          onDragStart: () => setDragId(action.id),
+          onDragEnd: () => {
+            setDragId(null);
+            setOverId(null);
+            setGroupTargetId(null);
+            isDraggableRef.current = false;
+          },
+          onDragOver: (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            if (dragId === null || dragId === action.id) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const y = e.clientY - rect.top;
+            const dragged = actions.find((a) => a.id === dragId);
+            const canGroup = !!dragged && dragged.type !== "parallel";
+            if (canGroup && y > rect.height * 0.25 && y < rect.height * 0.75) {
+              setGroupTargetId(action.id);
+              setOverId(null);
+            } else {
+              setGroupTargetId(null);
+              setOverId(action.id);
+            }
+          },
+          onDragLeave: () => {
+            setGroupTargetId(null);
+            setOverId(null);
+          },
+          onDrop: (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            handleDrop();
+          },
+          onMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
+            if (e.button !== 0) return;
+            let t = e.target as HTMLElement;
+            const row = e.currentTarget;
+            while (t && t !== row) {
+              if (t.tagName === "BUTTON" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return;
+              t = t.parentElement as HTMLElement;
+            }
+            holdTimerRef.current = setTimeout(() => {
+              isDraggableRef.current = true;
+            }, 200);
+          },
+          onMouseUp: () => {
+            if (holdTimerRef.current) {
+              clearTimeout(holdTimerRef.current);
+              holdTimerRef.current = null;
+            }
+          },
+        };
+
+        if (action.type === "parallel") {
+          const nested = (action.params.actions as Action[]) ?? [];
+          return (
+            <DraggableRow key={action.id} {...shared} style={groupRow}>
+              <RowHeader
+                icon={ACTION_ICON.parallel}
+                label={`Run together (${nested.length})`}
+                expanded={isExpanded}
+                onToggleExpand={() => guardedToggle(action.id)}
+                onMoveUp={idx > 0 ? () => reorderAction(elementId, interaction.id, action.id, idx - 1) : undefined}
+                onMoveDown={idx < actions.length - 1 ? () => reorderAction(elementId, interaction.id, action.id, idx + 1) : undefined}
+                onRemove={() => removeAction(elementId, interaction.id, action.id)}
+                removeTitle="Remove group"
+                extra={
+                  <button
+                    style={miniBtn}
+                    onClick={(e) => { e.stopPropagation(); ungroupAction(elementId, interaction.id, action.id); }}
+                    title="Split back into separate sequential actions"
+                  >
+                    Ungroup
+                  </button>
+                }
+              />
+              {isExpanded && (
+                <div style={section}>
+                  {nested.map((na, nIdx) => (
+                    <NestedActionRow
+                      key={na.id}
+                      action={na}
+                      scenes={project.scenes}
+                      targets={targets}
+                      expanded={expandedIds.has(na.id)}
+                      onToggleExpand={() => toggleExpanded(na.id)}
+                      onChange={(patch) => updateAction(elementId, interaction.id, na.id, patch)}
+                      onRemove={() => removeAction(elementId, interaction.id, na.id)}
+                      onMoveUp={nIdx > 0 ? () => moveNested(action, na.id, -1) : undefined}
+                      onMoveDown={nIdx < nested.length - 1 ? () => moveNested(action, na.id, 1) : undefined}
+                    />
+                  ))}
+                  <AddActionMenu
+                    scene={scene}
+                    project={project}
+                    elementId={elementId}
+                    otherElements={otherElements}
+                    onAdd={(t, defaults) => addAction(elementId, interaction.id, { type: t, params: defaults }, action.id)}
+                  />
+                </div>
+              )}
+            </DraggableRow>
+          );
+        }
+
+        return (
+          <DraggableRow key={action.id} {...shared} style={actionRow}>
+            <RowHeader
+              icon={ACTION_ICON[action.type] ?? "•"}
+              label={summarizeAction(action, targets, project.scenes)}
+              expanded={isExpanded}
+              onToggleExpand={() => guardedToggle(action.id)}
+              onMoveUp={idx > 0 ? () => reorderAction(elementId, interaction.id, action.id, idx - 1) : undefined}
+              onMoveDown={idx < actions.length - 1 ? () => reorderAction(elementId, interaction.id, action.id, idx + 1) : undefined}
+              onRemove={() => removeAction(elementId, interaction.id, action.id)}
+            />
+            {isExpanded && (
+              <ActionFields
+                action={action}
+                scenes={project.scenes}
+                targets={targets}
+                onChange={(patch) => updateAction(elementId, interaction.id, action.id, patch)}
+              />
+            )}
+          </DraggableRow>
+        );
+      })}
+
+      <AddActionMenu
+        scene={scene}
+        project={project}
+        elementId={elementId}
+        otherElements={otherElements}
+        onAdd={(t, defaults) => addAction(elementId, interaction.id, { type: t, params: defaults })}
+      />
+    </>
+  );
+}
+
+/** A non-draggable action row nested inside a "Run together" group (▲/▼ only — depth is capped at 1). */
+function NestedActionRow({
+  action,
+  scenes,
+  targets,
+  expanded,
+  onToggleExpand,
+  onChange,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+}: {
+  action: Action;
+  scenes: { id: string; name: string }[];
+  targets: ElementShape[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onChange: (patch: Partial<Action>) => void;
+  onRemove: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+}) {
+  return (
+    <div style={nestedActionRow}>
+      <RowHeader
+        icon={ACTION_ICON[action.type] ?? "•"}
+        label={summarizeAction(action, targets, scenes)}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        onRemove={onRemove}
+        showDragHandle={false}
+      />
+      {expanded && <ActionFields action={action} scenes={scenes} targets={targets} onChange={onChange} />}
     </div>
   );
 }
@@ -346,18 +778,17 @@ function SmartValueInput({
   }
 }
 
-function ActionRow({
+/** The full field editor for one action's params, shown when its row is expanded. */
+function ActionFields({
   action,
   scenes,
   targets,
   onChange,
-  onRemove,
 }: {
   action: Action;
   scenes: { id: string; name: string }[];
   targets: ElementShape[];
   onChange: (patch: Partial<Action>) => void;
-  onRemove: () => void;
 }) {
   const p = action.params as Record<string, any>;
   const setParam = (k: string, v: unknown) => onChange({ params: { ...p, [k]: v } });
@@ -365,27 +796,8 @@ function ActionRow({
   const videoElements = targets.filter((t) => t.type === "video");
   const audioVideoElements = targets.filter((t) => t.type === "video" || t.type === "audio");
 
-  const actionLabels: Record<string, string> = {
-    goToScene: "Go to scene",
-    setProp: "Set property",
-    toggle: "Toggle visibility",
-    animate: "Animate property",
-    setState: "Change scene state",
-    togglePlayPause: "Toggle play/pause",
-    seekVideo: "Seek video",
-    setVolume: "Set volume",
-    setSpeed: "Set playback speed",
-  };
-
   return (
-    <div style={actionRow}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ color: "#38bdf8", fontSize: 12, fontWeight: 600 }}>
-          {actionLabels[action.type] || action.type}
-        </span>
-        <button style={{ ...miniBtn, marginLeft: "auto", color: "#fca5a5" }} onClick={onRemove} title="Remove action">✕</button>
-      </div>
-
+    <div style={{ marginTop: 6 }}>
       {action.type === "goToScene" && (
         <select value={str(p.sceneId)} onChange={(e) => setParam("sceneId", e.target.value)} style={input}>
           {scenes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -742,6 +1154,16 @@ const actionRow: CSSProperties = {
   padding: 6,
   marginBottom: 4,
 };
+const groupRow: CSSProperties = {
+  ...actionRow,
+  border: "1px solid #2563eb",
+  background: "#0f1420",
+};
+const nestedActionRow: CSSProperties = {
+  ...actionRow,
+  marginLeft: 4,
+  background: "#0c1017",
+};
 const triggerChip: CSSProperties = {
   background: "#1e3a52",
   color: "#e0f2fe",
@@ -767,6 +1189,7 @@ const miniBtn: CSSProperties = {
   cursor: "pointer",
   fontSize: 12,
   padding: "0 2px",
+  flexShrink: 0,
 };
 const addTriggerBtn: CSSProperties = {
   width: "100%",
@@ -802,4 +1225,36 @@ const captureBtn: CSSProperties = {
   color: "#93c5fd",
   fontSize: 11,
   cursor: "pointer",
+};
+const dragHandle: CSSProperties = {
+  cursor: "grab",
+  color: "#475569",
+  fontSize: 12,
+  width: 12,
+  textAlign: "center",
+  flexShrink: 0,
+};
+const rowHeaderStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  cursor: "pointer",
+};
+const summaryText: CSSProperties = {
+  flex: 1,
+  fontSize: 12,
+  color: "#e2e8f0",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+const rowDropTarget: CSSProperties = {
+  // A line on top indicates where the dragged row will land (reorder mode).
+  boxShadow: "inset 0 2px 0 0 #38bdf8",
+};
+const rowGroupTarget: CSSProperties = {
+  // Full-row highlight indicates the dragged action will be grouped with this one.
+  background: "#1e3a52",
+  border: "1px solid #38bdf8",
+  boxShadow: "0 0 0 2px rgba(56, 189, 248, 0.2)",
 };

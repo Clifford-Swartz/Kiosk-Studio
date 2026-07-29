@@ -1,4 +1,4 @@
-import type { Project, Element } from "@kiosk/engine";
+import { flattenActions, type Project, type Element } from "@kiosk/engine";
 
 export interface SceneNode {
   sceneId: string;
@@ -30,7 +30,7 @@ export function buildSceneHierarchy(
 
   function traverseElement(el: Element, sceneId: string) {
     for (const interaction of el.interactions) {
-      for (const action of interaction.actions) {
+      for (const action of flattenActions(interaction.actions)) {
         if (action.type === "goToScene" && typeof action.params.sceneId === "string") {
           const targetId = action.params.sceneId;
           if (!goToSceneParents.has(targetId)) {

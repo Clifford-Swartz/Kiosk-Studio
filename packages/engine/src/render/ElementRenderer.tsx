@@ -89,6 +89,8 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
   const isHoverable = element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
   const isPressable = element.interactions.some((i) => i.trigger === "press" || i.trigger === "release");
 
+  const hasInteraction = isInteractive || isHoverable || isPressable;
+
   const baseStyle: React.CSSProperties = {
     position: "absolute",
     left: 0,
@@ -101,6 +103,9 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     transformOrigin: "center center",
     cursor: isInteractive || isPressable ? "pointer" : "default",
     userSelect: "none",
+    // Decorative elements in player mode must not block clicks on interactive
+    // elements (collections, buttons) behind them in z-order.
+    ...(!editorMode && !hasInteraction && { pointerEvents: "none" }),
   };
 
   const handleClick = isInteractive ? () => onTap?.(element) : undefined;
@@ -507,6 +512,17 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           data-element-id={element.id}
           style={{
             ...baseStyle,
+            // Layer is a full-scene container div. Without this, the layer div
+            // (which spans the whole scene) silently swallows pointer events for
+            // every layer below it in z-order, blocking buttons and interactions.
+            // Children with pointer-events: auto (the default) still receive events.
+            // Only opt back into auto if the layer itself has defined interactions.
+            pointerEvents: isInteractive || isHoverable || isPressable ? "auto" : "none",
+            // When a layer is fully hidden (opacity 0), visibility:hidden ensures
+            // children inherit the hidden state and stop absorbing pointer events.
+            // pointer-events:none on the container alone does NOT prevent children
+            // with explicit pointer-events:auto from blocking elements behind them.
+            ...(!editorMode && opacity === 0 && { visibility: "hidden" as const }),
             WebkitMaskImage: clipPathStyle,
             maskImage: clipPathStyle,
             WebkitMaskSize: `${width}px ${height}px`,
@@ -540,7 +556,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
       return (
         <div
           data-element-id={element.id}
-          style={{ ...baseStyle, overflow: "hidden" }}
+          style={{ ...baseStyle, overflow: "hidden", pointerEvents: "auto" }}
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
@@ -908,8 +924,13 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
     }
   }, [element.id, playing, props.autoplay, hasSource, src]);
 
+  const showControls = bool(props.showControls, false);
+  const hasAnyInteraction = (element.interactions ?? []).some(i =>
+    ["tap", "hover", "hover-end", "press", "press-end"].includes(i.trigger)
+  );
+  const isVisible = (baseStyle.opacity ?? 1) > 0;
   return (
-    <div ref={containerRef} data-element-id={element.id} style={baseStyle}>
+    <div ref={containerRef} data-element-id={element.id} style={{ ...baseStyle, pointerEvents: isVisible && (showControls || hasAnyInteraction) ? "auto" : "none" }}>
       {hasSource && shouldLoad && (
         <video
           ref={(el) => {

@@ -9,6 +9,7 @@ export {
   createProject,
   newId,
 } from "./model/factory.js";
+export { mapActions, filterActions, removeActionById, flattenActions } from "./model/actionTree.js";
 
 // Rendering: shared primitives used by Player and Editor.
 export { ElementRenderer, resolveSrc } from "./render/ElementRenderer.js";

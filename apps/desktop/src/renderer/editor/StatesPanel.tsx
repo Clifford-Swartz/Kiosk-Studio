@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useEditor } from "./store.js";
 import { importContentFile } from "./assets.js";
+import { Row } from "./components/Row.js";
 
 /**
  * Custom debounced callback hook - delays callback execution until user stops typing.
@@ -108,9 +109,6 @@ function StateList({ onSelectState }: { onSelectState: (name: string) => void })
   return (
     <div style={panel}>
       <div style={heading}>Scene States</div>
-      <div style={{ color: "#64748b", fontSize: 11, margin: "4px 4px 8px" }}>
-        Scene: {scene.name}
-      </div>
 
       <button style={chooseBtn} onClick={createState}>
         + New State
@@ -589,15 +587,6 @@ function getDefaultValue(propName: string): unknown {
 }
 
 // --- Styles ---
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "6px 0" }}>
-      <span style={{ width: 64, color: "#94a3b8", fontSize: 12 }}>{label}</span>
-      <span style={{ flex: 1 }}>{children}</span>
-    </label>
-  );
-}
 
 const panel: React.CSSProperties = {
   width: 260,
