@@ -8,7 +8,7 @@ A kiosk experience. Contains Scenes, defines canvas size (one size for all scene
 **Storage model (2026-07):** Projects stored as `.kproj` folders in `<app-dir>/Exports/`. Each contains `project.json` + `assets/` subfolder. Assets reference shared `<app-dir>/user-content/` library (not per-project folders). Export action creates bundled sibling with `{name}-exported.kproj` suffix — copies user-content refs into bundled `assets/`, rewrites paths, sets `exported: true` flag. See ADR 0008.
 
 ### Scene
-A screen in the kiosk experience. Contains Elements arranged on a canvas. Background can be a color or image.
+A screen in the kiosk experience. Contains Elements arranged on a canvas. Background can be a color, image, or video — video is extension-detected on the same `background` string field (no separate mediaType flag, same pattern as Collection media), always autoplays/loops/muted with no exposed playback controls (kiosk context = designed experience, not a general video player). See ADR 0012.
 
 ### Element
 A visual or interactive component on a Scene. Types: rectangle, text, image, video, audio, button, layer, collection. Elements have:
@@ -340,7 +340,7 @@ Replaced Video.js with native HTML5 `<video>` element. Wrapper div pattern (matc
    ```typescript
    protocol.handle(ASSET_SCHEME, async (request) => {
      const ext = extname(absPath).toLowerCase();
-     const mimeMap = { ".mp4": "video/mp4", ".webm": "video/webm", ... };
+     const mimeMap = { ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ... };
      return new Response(body, {
        headers: { "Content-Type": mimeMap[ext], "Accept-Ranges": "bytes" }
      });

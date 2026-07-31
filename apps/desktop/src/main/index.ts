@@ -8,6 +8,7 @@ import { readFile, writeFile, mkdir, appendFile, readdir, stat } from "node:fs/p
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
+import { probeMedia, reencodeVideo as reencodeVideoFile, dedupeFilename, type MediaProbeResult } from "./mediaSupport.js";
 
 /** Local settings (API key, etc.) — not part of any saved project. */
 const settingsStore = new Store<{ openaiApiKey?: string }>({ name: "kiosk-settings" });
@@ -391,24 +392,23 @@ async function copyToUserContent(sourcePath: string): Promise<string> {
   const contentDir = getSharedUserContentPath();
   await mkdir(contentDir, { recursive: true });
 
-  const fileName = basename(sourcePath);
-  let targetPath = join(contentDir, fileName);
-  let finalName = fileName;
-
-  if (await fileExists(targetPath)) {
-    const ext = extname(fileName);
-    const base = fileName.slice(0, -ext.length);
-    let i = 1;
-    while (await fileExists(join(contentDir, `${base}_${i}${ext}`))) {
-      i++;
-    }
-    finalName = `${base}_${i}${ext}`;
-    targetPath = join(contentDir, finalName);
-  }
-
+  const finalName = await dedupeFilename(contentDir, basename(sourcePath));
   const buf = await readFile(sourcePath);
-  await writeFile(targetPath, buf);
+  await writeFile(join(contentDir, finalName), buf);
   return `user-content/${finalName}`;
+}
+
+/**
+ * Resolve a project-relative asset path ("user-content/x" or "assets/x") to an
+ * absolute path, using the same "user-content/ -> app root, assets/ -> project
+ * dir" convention as saveAsset/copyToUserContent above. `projectPath` may be
+ * null for an unsaved project (only user-content/ paths are valid then).
+ */
+function resolveRelativeAssetPath(projectPath: string | null, relativePath: string): string {
+  if (relativePath.startsWith("assets/") && projectPath) {
+    return join(dirname(projectPath), relativePath);
+  }
+  return join(getAppRoot(), relativePath);
 }
 
 /** Check if a file exists without throwing. */
@@ -458,9 +458,9 @@ async function pickContent(
 ): Promise<{ name: string; path: string } | null> {
   const filterMap: Record<string, string[]> = {
     image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
-    video: ["mp4", "webm"],
+    video: ["mp4", "webm", "mov"],
     audio: ["mp3", "wav", "ogg"],
-    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm"],
+    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm", "mov"],
   };
 
   const contentDir = getSharedUserContentPath();
@@ -496,6 +496,46 @@ async function copyExternalFile(
     return `user-content/${basename(externalFilePath)}`;
   }
   return copyToUserContent(externalFilePath);
+}
+
+/**
+ * Probe a project-relative video's codecs so the renderer can warn before
+ * importing (or offer to fix) a file Chromium's <video> can't decode.
+ */
+async function probeVideo(
+  _e: unknown,
+  projectPath: string | null,
+  relativePath: string
+): Promise<MediaProbeResult> {
+  const absPath = resolveRelativeAssetPath(projectPath, relativePath);
+  return probeMedia(absPath);
+}
+
+/**
+ * Re-encode a project-relative video to H.264/AAC mp4, alongside the source
+ * file, reporting progress to the requesting window via the same "event:emit"
+ * channel used for live data-connector updates. Returns the new relative path.
+ */
+async function reencodeVideo(
+  e: Electron.IpcMainInvokeEvent,
+  projectPath: string | null,
+  relativePath: string
+): Promise<string> {
+  const absSrcPath = resolveRelativeAssetPath(projectPath, relativePath);
+  const dir = dirname(absSrcPath);
+  const outName = await dedupeFilename(dir, `${basename(relativePath, extname(relativePath))}.mp4`);
+  const absOutPath = join(dir, outName);
+
+  const probe = await probeMedia(absSrcPath);
+  const wc = e.sender;
+  await reencodeVideoFile(absSrcPath, absOutPath, probe.durationSec, (percent) => {
+    if (!wc.isDestroyed()) {
+      wc.send("event:emit", { kind: "encodeProgress", payload: { relativePath, percent }, timestamp: Date.now() });
+    }
+  });
+
+  const prefix = relativePath.startsWith("assets/") ? "assets/" : "user-content/";
+  return `${prefix}${outName}`;
 }
 
 /**
@@ -920,7 +960,7 @@ app.whenReady().then(async () => {
 
       const ext = extname(absPath).toLowerCase();
       const mimeMap: Record<string, string> = {
-        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
         ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
@@ -994,6 +1034,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("assets:pick", pickImage);
   ipcMain.handle("content:pick", pickContent);
   ipcMain.handle("content:copyExternal", copyExternalFile);
+  ipcMain.handle("media:probe", probeVideo);
+  ipcMain.handle("media:reencode", reencodeVideo);
   ipcMain.handle("pptx:import", importPptx);
   ipcMain.handle("data:start", startData);
   ipcMain.handle("data:stop", stopData);

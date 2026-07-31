@@ -70,7 +70,7 @@ function SmartThumbnail({ element }: { element: { type: string; props: Record<st
  * order (index = draw order, low = back), so we convert between the two.
  */
 interface TreeNode {
-  element: { id: string; type: string; name?: string; zIndex: number; opacity: number; props: Record<string, unknown>; locked?: boolean; children?: TreeNode['element'][] };
+  element: { id: string; type: string; name?: string; zIndex: number; opacity: number; props: Record<string, unknown>; locked?: boolean; visible?: boolean; children?: TreeNode['element'][] };
   depth: number;
   arrayIndex: number;
 }
@@ -374,10 +374,10 @@ export function SceneStructure() {
               style={iconBtn}
               onClick={(e) => {
                 e.stopPropagation();
-                updateElement(el.id, { opacity: el.opacity === 0 ? 1 : 0 });
+                updateElement(el.id, { visible: !(el.visible ?? true) });
               }}
             >
-              {el.opacity === 0 ? "🚫" : "👁"}
+              {el.visible === false ? "🚫" : "👁"}
             </button>
             <button
               title="Bring forward"

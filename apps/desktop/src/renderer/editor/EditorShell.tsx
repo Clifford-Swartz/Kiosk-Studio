@@ -5,6 +5,7 @@ import { StatesPanel } from "./StatesPanel.js";
 import { SidebarTabs } from "./SidebarTabs.js";
 import { TopBar } from "./TopBar.js";
 import { AiChatPanel } from "./AiChatPanel.js";
+import { VideoIncompatibilityModal } from "./VideoIncompatibilityModal.js";
 import { useUndoRedo } from "./useUndoRedo.js";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.js";
 import { useEditor } from "./store.js";
@@ -218,6 +219,7 @@ export function EditorShell({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImpor
         <RightToolbar />
         {aiOpen && <AiChatPanel pauseCapture={pauseCapture} resumeCapture={resumeCapture} />}
       </div>
+      <VideoIncompatibilityModal />
     </div>
   );
 }

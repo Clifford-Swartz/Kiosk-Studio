@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Binding, Element } from "../model/types.js";
 import { ANIMATABLE_PROPS } from "../runtime/PropertyRegistry.js";
-import { VisibilityManager } from "../runtime/VisibilityManager.js";
 import { eventBus } from "../events/EventBus.js";
 
 /**
@@ -80,6 +79,13 @@ export interface OverrideHost {
  * 3. State overrides (scene states)
  * 4. Interaction overrides (setProp)
  * 5. Animations (tweens)
+ *
+ * Note: `visible` flows through this pipeline like any other field — it is
+ * NOT clamped to force `opacity` here. ElementRenderer (the sole rendering
+ * consumer) derives the final render opacity from `visible`, since the
+ * editor canvas needs the true resolved opacity to dim (not hide) invisible
+ * elements while Player/runtime needs `visible: false` to force opacity to 0
+ * unconditionally. See ADR 0013.
  */
 class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost {
   // Binding state
@@ -275,15 +281,9 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
     let propsCloned = false;
 
     for (const [key, value] of Object.entries(overrides)) {
-      // Special key: __hidden forces opacity to 0 (deprecated, use visible in state overrides)
+      // Special key: __hidden forces visible false (deprecated, use visible in state overrides)
       if (key === "__hidden") {
-        next = {
-          ...next,
-          opacity: VisibilityManager.hiddenToOpacity(
-            value as boolean,
-            next.opacity ?? 1
-          ),
-        };
+        next = { ...next, visible: !(value as boolean) };
         continue;
       }
 

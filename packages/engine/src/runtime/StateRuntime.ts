@@ -1,5 +1,4 @@
 import type { Scene, Element } from "../model/types.js";
-import { VisibilityManager } from "./VisibilityManager.js";
 
 /**
  * Scene state runtime manages active state and applies visibility + property overrides.
@@ -82,10 +81,7 @@ export class StateRuntime {
 
     // Apply visibility override
     if (elementOverride.visible !== undefined) {
-      result.opacity = VisibilityManager.visibleToOpacity(
-        elementOverride.visible,
-        element.opacity ?? 1
-      );
+      result.visible = elementOverride.visible;
     }
 
     // Apply property overrides (return only overrides, let pipeline merge)
@@ -101,17 +97,5 @@ export class StateRuntime {
    */
   setNotifyChange(callback: (() => void) | null): void {
     this.notifyChange = callback;
-  }
-
-  /**
-   * Check if element is visible in current state.
-   * Returns true if no state active or element has no visibility override.
-   */
-  isVisible(element: Element): boolean {
-    return VisibilityManager.isVisibleInState(
-      element,
-      this.activeStateName ?? undefined,
-      this.currentScene ?? { states: {} }
-    );
   }
 }

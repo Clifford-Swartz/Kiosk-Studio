@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 3,
+  "id": "proj-hello",
+  "name": "Hello Kiosk",
+  "width": 1920,
+  "height": 1080,
+  "startSceneId": "scene-home",
+  "scenes": [
+    {
+      "id": "scene-home",
+      "name": "Home",
+      "width": 1920,
+      "height": 1080,
+      "background": "user-content/AdobeStock_650080150.jpeg",
+      "backgroundSize": "cover",
+      "elements": [
+        {
+          "id": "title",
+          "type": "text",
+          "x": 262,
+          "y": 155,
+          "width": 1396,
+          "height": 160,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 1,
+          "props": {
+            "text": "Welcome to Kiosk Studio",
+            "color": "#f8fafc",
+            "fontSize": 96,
+            "fontWeight": "700",
+            "align": "center",
+            "fontStyle": "italic"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "name": "Welcome Text"
+        },
+        {
+          "id": "image-a93612b2",
+          "type": "image",
+          "name": "image1",
+          "x": 1431,
+          "y": 575,
+          "width": 396,
+          "height": 557,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 2,
+          "props": {
+            "src": "user-content/AIML_Icon_round.svg",
+            "fit": "cover",
+            "alt": ""
+          },
+          "bindings": [],
+          "interactions": [
+            {
+              "id": "int-11f09226",
+              "trigger": "hover",
+              "actions": [
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-f99cc9dc",
+                    "property": "opacity",
+                    "to": 1,
+                    "duration": 400,
+                    "easing": "easeIn",
+                    "from": 0
+                  }
+                },
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-f99cc9dc",
+                    "property": "position",
+                    "to": {
+                      "x": 1025,
+                      "y": 700
+                    },
+                    "duration": 450,
+                    "easing": "easeIn",
+                    "from": {
+                      "x": 1209,
+                      "y": 700
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "int-278d4639",
+              "trigger": "hoverEnd",
+              "actions": [
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-f99cc9dc",
+                    "property": "opacity",
+                    "to": -2,
+                    "duration": 300,
+                    "easing": "easeIn",
+                    "from": 1
+                  }
+                }
+              ]
+            },
+            {
+              "id": "int-3483d7ff",
+              "trigger": "tap",
+              "actions": [
+                {
+                  "type": "goToScene",
+                  "params": {
+                    "sceneId": "scene-info"
+                  }
+                }
+              ]
+            }
+          ],
+          "locked": false
+        },
+        {
+          "id": "el-04c2ead1",
+          "type": "button",
+          "name": "button1",
+          "x": 131,
+          "y": 688,
+          "width": 330,
+          "height": 330,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 3,
+          "props": {
+            "label": "",
+            "fillType": "color",
+            "fill": "#99160f",
+            "imageSrc": "__placeholder__",
+            "imageFit": "cover",
+            "color": "#ffffff",
+            "radius": 190,
+            "fontSize": 28
+          },
+          "bindings": [],
+          "interactions": [
+            {
+              "id": "int-d139b2a5",
+              "trigger": "hover",
+              "actions": [
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-632436f3",
+                    "property": "opacity",
+                    "to": 1,
+                    "duration": 400,
+                    "easing": "easeIn",
+                    "from": 0,
+                    "delay": 0
+                  }
+                },
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-632436f3",
+                    "property": "position",
+                    "to": {
+                      "x": 446,
+                      "y": 703
+                    },
+                    "duration": 450,
+                    "easing": "easeIn",
+                    "from": {
+                      "x": 294,
+                      "y": 704
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "int-59ad083f",
+              "trigger": "hoverEnd",
+              "actions": [
+                {
+                  "type": "animate",
+                  "params": {
+                    "target": "text-632436f3",
+                    "property": "opacity",
+                    "to": -2,
+                    "duration": 300,
+                    "easing": "easeIn",
+                    "from": 1
+                  }
+                }
+              ]
+            },
+            {
+              "id": "int-e0ad6fde",
+              "trigger": "tap",
+              "actions": [
+                {
+                  "type": "goToScene",
+                  "params": {
+                    "sceneId": "scene-abae9f20"
+                  }
+                }
+              ]
+            }
+          ],
+          "locked": false
+        },
+        {
+          "id": "rectangle-74ce878a",
+          "type": "rectangle",
+          "name": "rectangle1",
+          "x": 146,
+          "y": 704,
+          "width": 300,
+          "height": 300,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 4,
+          "props": {
+            "fill": "#ffffff",
+            "radius": 150
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        },
+        {
+          "id": "image-1e5a6b59",
+          "type": "image",
+          "name": "image2",
+          "x": 141,
+          "y": 700,
+          "width": 305,
+          "height": 303,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 5,
+          "props": {
+            "src": "user-content/ChatIcon.svg",
+            "fit": "cover",
+            "alt": ""
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        },
+        {
+          "id": "text-632436f3",
+          "type": "text",
+          "name": "About Text",
+          "x": 446,
+          "y": 700,
+          "width": 499,
+          "height": 111,
+          "rotation": 0,
+          "opacity": 0,
+          "zIndex": 6,
+          "props": {
+            "text": "About Kiosk Studio",
+            "color": "#ffffff",
+            "fontSize": 50,
+            "align": "center",
+            "fontWeight": "bold",
+            "fontStyle": "italic"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        },
+        {
+          "id": "text-f99cc9dc",
+          "type": "text",
+          "name": "Can Do Text",
+          "x": 1209,
+          "y": 700,
+          "width": 480,
+          "height": 133,
+          "rotation": 0,
+          "opacity": 0,
+          "zIndex": 7,
+          "props": {
+            "text": "What Can It Do?",
+            "color": "#ffffff",
+            "fontSize": 50,
+            "align": "center",
+            "fontWeight": "bold",
+            "fontStyle": "italic"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        }
+      ],
+      "transition": {
+        "type": "fade",
+        "duration": 500,
+        "direction": "left",
+        "elementsOnly": true
+      }
+    },
+    {
+      "id": "scene-info",
+      "name": "Can Do?",
+      "width": 1920,
+      "height": 1080,
+      "background": "user-content/AdobeStock_565165995.jpeg",
+      "elements": [
+        {
+          "id": "info-title",
+          "type": "text",
+          "x": 160,
+          "y": 220,
+          "width": 1600,
+          "height": 140,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 1,
+          "props": {
+            "text": "What Kiosk Studio Supports\n",
+            "color": "#d6e0ff",
+            "fontSize": 80,
+            "fontWeight": "700"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        },
+        {
+          "id": "info-body",
+          "type": "text",
+          "x": 160,
+          "y": 400,
+          "width": 1060,
+          "height": 484,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 1,
+          "props": {
+            "text": "- Animations\n- Touch/Mouse-based interactions\n- Scene Transitions\n- Project-Wide Navigation buttons\n- PowerPoint Imports\n- Easy Content Management\n- Live Data Bindings to Text & Display\n- And More!",
+            "color": "#d6ddff",
+            "fontSize": 46,
+            "fontWeight": "bold"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        }
+      ],
+      "transition": {
+        "type": "fade",
+        "duration": 500,
+        "direction": "left",
+        "elementsOnly": true
+      }
+    },
+    {
+      "id": "scene-abae9f20",
+      "name": "About",
+      "background": "user-content/AdobeStock_372929276.jpeg",
+      "backgroundSize": "cover",
+      "elements": [
+        {
+          "id": "el-51864164",
+          "type": "text",
+          "x": 893,
+          "y": 100,
+          "width": 1027,
+          "height": 140,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 1,
+          "props": {
+            "text": "About Kiosk Studio\n",
+            "color": "#d6e0ff",
+            "fontSize": 80,
+            "fontWeight": "700",
+            "align": "center"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        },
+        {
+          "id": "text-d1f1b670",
+          "type": "text",
+          "name": "text2",
+          "x": 498,
+          "y": 306,
+          "width": 1384,
+          "height": 582,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 2,
+          "props": {
+            "text": "Kiosk Studio is a fully functional, touch based \nand interaction driven application, supporting immersive demos and adaptable software.\n\nPowered by AI, the resulting product is independent and allows Microchip employees to focus on putting their \nvaluable skills to use, without worrying about the details of how to showcase their products to any \nwould-be customers or employees.",
+            "color": "#cde2fe",
+            "fontSize": 50,
+            "align": "right",
+            "fontWeight": "normal",
+            "fontFamily": "Helvetica, Arial, sans-serif"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false
+        }
+      ],
+      "transition": {
+        "type": "fade",
+        "duration": 500,
+        "direction": "left",
+        "elementsOnly": true
+      }
+    }
+  ],
+  "dataConnectors": [],
+  "enableBackButton": true,
+  "enableHomeButton": true
+}

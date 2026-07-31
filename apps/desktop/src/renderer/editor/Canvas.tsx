@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { resolveSrc, Player, type Element } from "@kiosk/engine";
+import { resolveSrc, isVideoSrc, Player, type Element } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importImageBlob, useProjectAssetBase, importImageFromPath } from "./assets.js";
 import { collectTargets, snapMove, snapResize, snapRotation, type GuideLine, type SnapTargets } from "./snap.js";
@@ -190,6 +190,7 @@ export function Canvas({
   const exitTextEditing = useEditor((s) => s.exitTextEditing);
   const updateProps = useEditor((s) => s.updateElementProps);
   const addImageElement = useEditor((s) => s.addImageElement);
+  const setVideoIncompatibility = useEditor((s) => s.setVideoIncompatibility);
   const filePath = useEditor((s) => s.filePath);
   const assetBaseUrl = useProjectAssetBase(filePath);
   // Canvas size is project-wide (one size for all scenes).
@@ -336,6 +337,32 @@ export function Canvas({
     }
 
     if (rel) addImageElement(rel, pos);
+  }
+
+  /**
+   * Fired by the embedded Player when a video already in the project fails to
+   * decode at runtime (pre-existing asset, drag-dropped file, hand-edited
+   * JSON). Re-probes to get codec names for the modal, then offers the same
+   * re-encode/import-anyway/cancel choice as import-time detection; on
+   * re-encode, patches the element's src to the new file.
+   */
+  async function onVideoIncompatible(elementId: string, src: string) {
+    if (!isVideoSrc(src)) return;
+    const probe = await window.kiosk.probeVideo(filePath, src);
+    if (probe.supported !== false) return;
+
+    const fileName = src.split(/[/\\]/).pop() ?? src;
+    setVideoIncompatibility({
+      fileName,
+      relativePath: src,
+      projectPath: filePath,
+      videoCodec: probe.videoCodec,
+      audioCodec: probe.audioCodec,
+      reason: probe.reason,
+      resolve: (newPath) => {
+        if (newPath && newPath !== src) updateProps(elementId, { src: newPath });
+      },
+    });
   }
 
   // Keep scale in a ref so the (stable) drag handlers always read the current
@@ -635,12 +662,17 @@ export function Canvas({
           transformOrigin: "center center",
           ...((!scene.background || scene.background.startsWith('#'))
             ? { background: scene.background }
-            : {
-                backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
-                backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
-                backgroundPosition: scene.backgroundPosition || 'center',
-                backgroundRepeat: 'no-repeat',
-              }),
+            : isVideoSrc(scene.background)
+              // The real video is rendered by the embedded <Player> below,
+              // which fully covers this div — CSS can't autoplay a video via
+              // background-image, so this is just a color fallback.
+              ? { background: "#000000" }
+              : {
+                  backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
+                  backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
+                  backgroundPosition: scene.backgroundPosition || 'center',
+                  backgroundRepeat: 'no-repeat',
+                }),
           boxShadow: "0 0 0 1px #2a3441, 0 20px 60px rgba(0,0,0,0.5)",
           flexShrink: 0,
         }}
@@ -669,6 +701,7 @@ export function Canvas({
             assetBaseUrl={assetBaseUrl}
             live={true}
             editorMode={true}
+            onIncompatible={onVideoIncompatible}
           />
         </div>
 

@@ -226,6 +226,7 @@ const ACTION_ICON: Record<string, string> = {
   setState: "◇",
   togglePlayPause: "⏯",
   seekVideo: "⏩",
+  scrubVideo: "⏮",
   setVolume: "🔊",
   setSpeed: "⏱",
   parallel: "⇶",
@@ -265,6 +266,12 @@ function summarizeAction(
       return `Toggle play/pause on ${targetLabel(p.target)}`;
     case "seekVideo":
       return `Seek ${targetLabel(p.target)} to ${typeof p.time === "number" ? p.time : 0}s`;
+    case "scrubVideo": {
+      const from = typeof p.from === "number" ? `${p.from}s` : "current";
+      const to = typeof p.to === "number" ? p.to : 0;
+      const duration = typeof p.duration === "number" ? p.duration : 500;
+      return `Scrub ${targetLabel(p.target)} ${from} → ${to}s (${duration}ms)`;
+    }
     case "setVolume":
       return `Set volume of ${targetLabel(p.target)} to ${Math.round((typeof p.volume === "number" ? p.volume : 1) * 100)}%`;
     case "setSpeed":
@@ -305,6 +312,7 @@ function AddActionMenu({
           : t === "setProp" ? { target: otherElements[0]?.id ?? elementId, key: "text", value: "" }
           : t === "togglePlayPause" ? { target: videoElements[0]?.id ?? "" }
           : t === "seekVideo" ? { target: videoElements[0]?.id ?? "", time: 0 }
+          : t === "scrubVideo" ? { target: videoElements[0]?.id ?? "", to: 0, duration: 500, easing: "linear" }
           : t === "setVolume" ? { target: videoElements[0]?.id ?? "", volume: 1 }
           : t === "setSpeed" ? { target: videoElements[0]?.id ?? "", rate: 1 }
           : t === "animate" ? { target: otherElements[0]?.id ?? elementId, property: "opacity", to: 0, duration: 300, easing: "linear" }
@@ -322,6 +330,7 @@ function AddActionMenu({
       <option value="setState">Change scene state</option>
       <option value="togglePlayPause">Toggle play/pause</option>
       <option value="seekVideo">Seek video to time</option>
+      <option value="scrubVideo">Scrub video between times</option>
       <option value="setVolume">Set volume</option>
       <option value="setSpeed">Set playback speed</option>
     </select>
@@ -908,6 +917,51 @@ function ActionFields({
             onChange={(e) => setParam("time", Number(e.target.value))}
             style={{ ...input, marginTop: 4 }}
           />
+        </>
+      )}
+
+      {action.type === "scrubVideo" && (
+        <>
+          <select value={str(p.target)} onChange={(e) => setParam("target", e.target.value)} style={input}>
+            <option value="">— choose video —</option>
+            {videoElements.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
+          </select>
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              placeholder="From (s, optional)"
+              value={typeof p.from === "number" ? p.from : ""}
+              onChange={(e) => setParam("from", e.target.value === "" ? undefined : Number(e.target.value))}
+              style={{ ...input, flex: 1 }}
+            />
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              placeholder="To (s)"
+              value={typeof p.to === "number" ? p.to : ""}
+              onChange={(e) => setParam("to", Number(e.target.value))}
+              style={{ ...input, flex: 1 }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            <input
+              type="number"
+              min={0}
+              placeholder="Duration (ms)"
+              value={typeof p.duration === "number" ? p.duration : ""}
+              onChange={(e) => setParam("duration", Number(e.target.value))}
+              style={{ ...input, flex: 1 }}
+            />
+            <select value={str(p.easing) || "linear"} onChange={(e) => setParam("easing", e.target.value)} style={{ ...input, flex: 1 }}>
+              <option value="linear">Linear</option>
+              <option value="easeIn">Ease In</option>
+              <option value="easeOut">Ease Out</option>
+              <option value="easeInOut">Ease In Out</option>
+            </select>
+          </div>
         </>
       )}
 

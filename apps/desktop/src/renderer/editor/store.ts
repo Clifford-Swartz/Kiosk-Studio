@@ -18,6 +18,24 @@ import {
 } from "@kiosk/engine";
 
 /**
+ * A video import (or an already-in-project asset failing at playback) whose
+ * codec Chromium's <video> can't decode. Set by assets.ts/Canvas.tsx when a
+ * probe or runtime error detects this; cleared by VideoIncompatibilityModal
+ * once the user picks an action. `resolve` is the caller's continuation —
+ * called with the relative path to use (possibly re-encoded), or null if the
+ * user canceled.
+ */
+export interface PendingVideoIncompatibility {
+  fileName: string;
+  relativePath: string;
+  projectPath: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  reason?: string;
+  resolve: (relativePath: string | null) => void;
+}
+
+/**
  * The editor's single source of truth. Holds the working Project plus UI
  * selection state, and exposes immutable edit operations. The Canvas, layer
  * tree, and Properties panel all read/write through this store, so they stay
@@ -63,6 +81,8 @@ export interface EditorState {
   editingId: string | null;
   /** Mask editing mode: element ID being edited, or null. */
   maskEditingId: string | null;
+  /** Codec-incompatible video awaiting a user decision (re-encode / import anyway / cancel). */
+  videoIncompatibility: PendingVideoIncompatibility | null;
 
   // --- selectors (derived) ---
   activeScene: () => Scene;
@@ -123,6 +143,8 @@ export interface EditorState {
   exitTextEditing: () => void;
   startMaskEditing: (elementId: string) => void;
   exitMaskEditing: () => void;
+  /** Open (or close, with null) the codec-incompatibility modal. */
+  setVideoIncompatibility: (pending: PendingVideoIncompatibility | null) => void;
   setActiveTab: (tab: "scene" | "project") => void;
   toggleSceneCollapse: (sceneId: string) => void;
   setVisualParent: (sceneId: string, parentId: string | null) => void;
@@ -274,6 +296,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   collapsedElementIds: new Set(),
   editingId: null,
   maskEditingId: null,
+  videoIncompatibility: null,
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
 
@@ -291,6 +314,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   exitTextEditing: () => set({ editingId: null }),
   startMaskEditing: (elementId) => set({ maskEditingId: elementId, selectedId: elementId }),
   exitMaskEditing: () => set({ maskEditingId: null }),
+  setVideoIncompatibility: (pending) => set({ videoIncompatibility: pending }),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
@@ -342,7 +366,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   isModalEditingActive: () => {
     const s = get();
-    return s.editingId !== null || s.maskEditingId !== null;
+    return s.editingId !== null || s.maskEditingId !== null || s.videoIncompatibility !== null;
   },
 
   loadProject: (project, filePath = null) =>

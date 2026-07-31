@@ -12,7 +12,7 @@ export {
 export { mapActions, filterActions, removeActionById, flattenActions } from "./model/actionTree.js";
 
 // Rendering: shared primitives used by Player and Editor.
-export { ElementRenderer, resolveSrc } from "./render/ElementRenderer.js";
+export { ElementRenderer, resolveSrc, isVideoSrc } from "./render/ElementRenderer.js";
 export type { ElementRendererProps } from "./render/ElementRenderer.js";
 export { Player } from "./render/Player.js";
 export type { PlayerProps } from "./render/Player.js";

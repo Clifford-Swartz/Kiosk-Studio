@@ -1,6 +1,7 @@
 import type {} from "../../preload/api.js";
 import { useEditor } from "./store.js";
 import { useEffect, useState } from "react";
+import { isVideoSrc } from "@kiosk/engine";
 
 /**
  * Base URL for resolving a project's relative asset paths. Uses the custom
@@ -114,6 +115,38 @@ export async function importContentFile(
   const picked = await window.kiosk.pickContent(type);
   if (!picked) return null;
   return picked.path;
+}
+
+/**
+ * Same as importContentFile, but for video/media: probes the imported file's
+ * codec and, if Chromium's <video> can't decode it, opens the incompatibility
+ * modal and awaits the user's choice (re-encode / import anyway / cancel)
+ * before resolving. Non-video files, and videos that probe as supported (or
+ * whose probe fails - fail open, don't block on a probing bug), resolve
+ * immediately with no modal.
+ */
+export async function importVideoAware(
+  type: "video" | "media"
+): Promise<string | null> {
+  const relativePath = await importContentFile(type);
+  if (!relativePath || !isVideoSrc(relativePath)) return relativePath;
+
+  const projectPath = useEditor.getState().filePath;
+  const probe = await window.kiosk.probeVideo(projectPath, relativePath);
+  if (probe.supported !== false) return relativePath;
+
+  const fileName = relativePath.split(/[/\\]/).pop() ?? relativePath;
+  return new Promise<string | null>((resolve) => {
+    useEditor.getState().setVideoIncompatibility({
+      fileName,
+      relativePath,
+      projectPath,
+      videoCodec: probe.videoCodec,
+      audioCodec: probe.audioCodec,
+      reason: probe.reason,
+      resolve,
+    });
+  });
 }
 
 /**

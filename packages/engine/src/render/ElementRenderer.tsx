@@ -4,6 +4,7 @@ import { CollectionRenderer } from "./collections/CollectionRenderer.js";
 import { VideoControls } from "./VideoControls.js";
 import { eventBus } from "../events/EventBus.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
+import { VisibilityManager } from "../runtime/VisibilityManager.js";
 
 export interface ElementRendererProps {
   element: Element;
@@ -28,6 +29,8 @@ export interface ElementRendererProps {
   onAudioRef?: (elementId: string, ref: HTMLAudioElement | null) => void;
   /** Callback to register video elements by ID for playback control. */
   onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
+  /** Fired when a video element reports a DECODE/SRC_NOT_SUPPORTED playback error. */
+  onIncompatible?: (elementId: string, src: string) => void;
   /** True when rendering in editor mode; disables button interaction overlays. */
   editorMode?: boolean;
   /**
@@ -75,21 +78,42 @@ export function resolveSrc(src: string, base?: string): string {
 }
 
 /**
+ * Determines if a source path is a video based on file extension. Used
+ * wherever a single string field does double duty for image and video
+ * sources (Collection items, Scene background) instead of a separate
+ * mediaType field — see ADR 0006.
+ */
+export function isVideoSrc(src: string): boolean {
+  const ext = src.split(".").pop()?.toLowerCase();
+  return ext === "mp4" || ext === "webm" || ext === "mov" || ext === "ogg";
+}
+
+/**
  * Renders a single scene element as an absolutely-positioned DOM node using
  * CSS transforms. This is the shared rendering primitive used by both the
  * Player and (later) the Editor canvas.
  *
  * Memoized to prevent unnecessary re-renders when parent updates but element props unchanged.
  */
-export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, editorMode, resolveElement }: ElementRendererProps) {
+export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, onIncompatible, editorMode, resolveElement }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
-  const isInteractive = element.interactions.some((i) => i.trigger === "tap");
-  const isHoverable = element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
-  const isPressable = element.interactions.some((i) => i.trigger === "press" || i.trigger === "release");
+  const visible = VisibilityManager.isVisible(element);
+  const isInteractive = visible && element.interactions.some((i) => i.trigger === "tap");
+  const isHoverable = visible && element.interactions.some((i) => i.trigger === "hover" || i.trigger === "hoverEnd");
+  const isPressable = visible && element.interactions.some((i) => i.trigger === "press" || i.trigger === "release");
 
   const hasInteraction = isInteractive || isHoverable || isPressable;
+
+  // Editor-only: dim invisible elements instead of fully hiding them, so they
+  // stay visible/selectable while editing. Nothing to dim if opacity is
+  // already 0 (a deliberate fully-transparent element). Outside the editor,
+  // visible=false forces opacity to 0 unconditionally — this is the one place
+  // that enforces it, so a running animation tween can't fight a `visible:
+  // false` override back to non-zero (see ADR 0013).
+  const editorDim = editorMode && !visible && opacity > 0;
+  const renderOpacity = editorMode ? (editorDim ? 0.4 : opacity) : (visible ? opacity : 0);
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -97,15 +121,20 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     top: 0,
     width,
     height,
-    opacity,
+    opacity: renderOpacity,
     zIndex,
     transform: `translate(${x}px, ${y}px) rotate(${rotation}deg)`,
     transformOrigin: "center center",
     cursor: isInteractive || isPressable ? "pointer" : "default",
     userSelect: "none",
     // Decorative elements in player mode must not block clicks on interactive
-    // elements (collections, buttons) behind them in z-order.
-    ...(!editorMode && !hasInteraction && { pointerEvents: "none" }),
+    // elements (collections, buttons) behind them in z-order. Set explicitly
+    // both ways (not just the "none" case) — `pointer-events` is CSS-inherited,
+    // so an interactive element left unset here would silently inherit "none"
+    // from a non-interactive ancestor `layer` container (see the "layer" case
+    // below, which sets its own pointer-events to "none" when it has no
+    // interactions of its own).
+    ...(!editorMode && { pointerEvents: hasInteraction ? "auto" : "none" }),
   };
 
   const handleClick = isInteractive ? () => onTap?.(element) : undefined;
@@ -162,6 +191,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
         editorMode={editorMode}
         onAudioRef={onAudioRef}
         onVideoRef={onVideoRef}
+        onIncompatible={onIncompatible}
         resolveElement={resolveElement}
       />
     );
@@ -385,7 +415,14 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           assetBaseUrl={assetBaseUrl}
           playing={playing}
           onVideoRef={onVideoRef}
+          onIncompatible={onIncompatible}
           baseStyle={baseStyle}
+          hasInteraction={hasInteraction}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
         />
       );
 
@@ -461,7 +498,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
             {children}
           </div>
           {/* Invisible interaction overlay at high z-index (only in player mode) */}
-          {!editorMode && (
+          {!editorMode && visible && (
             <div
               style={{
                 position: "absolute",
@@ -518,11 +555,12 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
             // Children with pointer-events: auto (the default) still receive events.
             // Only opt back into auto if the layer itself has defined interactions.
             pointerEvents: isInteractive || isHoverable || isPressable ? "auto" : "none",
-            // When a layer is fully hidden (opacity 0), visibility:hidden ensures
+            // When a layer is fully hidden (opacity 0, whether from its own base
+            // opacity or a visible:false override), visibility:hidden ensures
             // children inherit the hidden state and stop absorbing pointer events.
             // pointer-events:none on the container alone does NOT prevent children
             // with explicit pointer-events:auto from blocking elements behind them.
-            ...(!editorMode && opacity === 0 && { visibility: "hidden" as const }),
+            ...(!editorMode && renderOpacity === 0 && { visibility: "hidden" as const }),
             WebkitMaskImage: clipPathStyle,
             maskImage: clipPathStyle,
             WebkitMaskSize: `${width}px ${height}px`,
@@ -804,14 +842,24 @@ interface VideoElementProps {
   assetBaseUrl?: string;
   playing?: boolean;
   onVideoRef?: (elementId: string, ref: HTMLVideoElement | null) => void;
+  /** Fired when the <video> reports a DECODE (3) or SRC_NOT_SUPPORTED (4) error — an
+   * unplayable codec rather than a transient network/abort issue. Unused by default, so
+   * the exported/deployed Player (no ffmpeg available outside Electron) is unaffected. */
+  onIncompatible?: (elementId: string, src: string) => void;
   baseStyle: React.CSSProperties;
+  hasInteraction?: boolean;
+  onClick?: () => void;
+  onMouseEnter?: (e: React.MouseEvent) => void;
+  onMouseLeave?: (e: React.MouseEvent) => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
+  onPointerUp?: (e: React.PointerEvent) => void;
 }
 
 /**
  * Native HTML5 video element with programmatic control.
- * Supports standard video formats (mp4, webm, ogg).
+ * Supports standard video formats (mp4, webm, mov, ogg).
  */
-function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }: VideoElementProps) {
+function VideoElement({ element, assetBaseUrl, playing, onVideoRef, onIncompatible, baseStyle, hasInteraction, onClick, onMouseEnter, onMouseLeave, onPointerDown, onPointerUp }: VideoElementProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasError, setHasError] = useState(false);
@@ -853,9 +901,12 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
     };
   }, [hasSource]);
 
-  // Register video ref with Player and setup event listeners
+  // Register video ref with Player and setup event listeners. Depends on
+  // `videoEl` state (not videoRef.current) — the <video> tag mounts lazily
+  // once `shouldLoad` flips true, so a ref read on mount would register null
+  // and never re-fire once the real node exists.
   useEffect(() => {
-    const video = videoRef.current;
+    const video = videoEl;
     onVideoRef?.(element.id, video);
 
     if (!video) return;
@@ -901,7 +952,7 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
       video.removeEventListener("seeked", onSeeked);
       onVideoRef?.(element.id, null);
     };
-  }, [element.id, onVideoRef]);
+  }, [element.id, onVideoRef, videoEl]);
 
   // Handle autoplay when playing prop changes
   useEffect(() => {
@@ -925,12 +976,18 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
   }, [element.id, playing, props.autoplay, hasSource, src]);
 
   const showControls = bool(props.showControls, false);
-  const hasAnyInteraction = (element.interactions ?? []).some(i =>
-    ["tap", "hover", "hover-end", "press", "press-end"].includes(i.trigger)
-  );
   const isVisible = (baseStyle.opacity ?? 1) > 0;
   return (
-    <div ref={containerRef} data-element-id={element.id} style={{ ...baseStyle, pointerEvents: isVisible && (showControls || hasAnyInteraction) ? "auto" : "none" }}>
+    <div
+      ref={containerRef}
+      data-element-id={element.id}
+      style={{ ...baseStyle, pointerEvents: isVisible && (showControls || hasInteraction) ? "auto" : "none" }}
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+    >
       {hasSource && shouldLoad && (
         <video
           ref={(el) => {
@@ -955,6 +1012,7 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
               codes: { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" },
             });
             setHasError(true);
+            if (errorCode === 3 || errorCode === 4) onIncompatible?.(element.id, rawSrc);
           }}
           onLoadStart={() => setHasError(false)}
           style={{
@@ -1006,11 +1064,6 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, baseStyle }:
     </div>
   );
 }
-
-/**
- * Detect MIME type from file extension.
- * Supports: mp4, webm, ogg, m3u8 (HLS), mpd (DASH).
- */
 
 // --- text element (per-line rich text + autofit) ----------------------------
 

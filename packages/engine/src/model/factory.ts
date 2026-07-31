@@ -139,6 +139,7 @@ export function createElement(
     tint: partial.tint,
     mask: partial.mask,
     locked: partial.locked ?? false,
+    visible: partial.visible ?? true,
     children: partial.children,
   };
 }

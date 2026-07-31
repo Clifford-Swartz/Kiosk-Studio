@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import type { Element } from "@kiosk/engine";
 import { isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importContentFile, validateAudioFile } from "./assets.js";
+import { importContentFile, importVideoAware, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
 import { Row } from "./components/Row.js";
 
@@ -141,7 +141,7 @@ export function PropertiesPanel() {
             <div style={{ color: "#94a3b8", fontSize: 11, padding: "4px 4px 8px" }}>
               {elements.length} children selected
             </div>
-            <TypeFields element={parentLayer} updateProps={updateProps} />
+            <TypeFields element={parentLayer} updateProps={updateProps} updateElement={updateElement} />
           </div>
         );
       }
@@ -193,7 +193,7 @@ export function PropertiesPanel() {
       </Row>
 
       <div style={{ ...heading, marginTop: 14 }}>{el.type} content</div>
-      <TypeFields element={el} updateProps={updateProps} />
+      <TypeFields element={el} updateProps={updateProps} updateElement={updateElement} />
 
       <InteractionsEditor elementId={el.id} />
 
@@ -211,9 +211,11 @@ export function PropertiesPanel() {
 function TypeFields({
   element: el,
   updateProps,
+  updateElement,
 }: {
   element: Element;
   updateProps: (id: string, props: Record<string, unknown>) => void;
+  updateElement: (id: string, patch: Partial<Element>) => void;
 }) {
   const set = (k: string, v: unknown) => updateProps(el.id, { [k]: v });
   const debouncedSet = useDebouncedCallback(set, 300);
@@ -309,6 +311,14 @@ function TypeFields({
     case "button":
       return (
         <>
+          <CheckRow label="Disabled">
+            <input
+              type="checkbox"
+              checked={el.visible === false}
+              onChange={(e) => updateElement(el.id, { visible: !e.target.checked })}
+            />
+          </CheckRow>
+
           <Row label="Label"><Text value={str(p.label, "Button")} onChange={(v) => set("label", v)} /></Row>
 
           <Row label="Fill Type">
@@ -446,7 +456,7 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const rel = await importContentFile("video");
+              const rel = await importVideoAware("video");
               if (rel) set("src", rel);
             }}
           >
@@ -686,7 +696,7 @@ function SceneSettings() {
       </Row>
 
       <div style={{ color: "#7185b4", fontSize: 14, fontWeight: 500, letterSpacing: 0.3, margin: "12px 2px 6px" }}>
-        Background Image
+        Background Image / Video
       </div>
       <button
         style={chooseBtn}
@@ -696,16 +706,16 @@ function SceneSettings() {
             alert("Save the project first.");
             return;
           }
-          const rel = await importContentFile("image");
+          const rel = await importVideoAware("media");
           if (rel) updateActiveScene({ background: rel });
         }}
       >
-        Choose background image…
+        Choose background image or video…
       </button>
 
       {scene.background && !scene.background.startsWith('#') && (
         <>
-          <Row label="Image">
+          <Row label="Source">
             <input
               type="text"
               value={scene.background}
@@ -730,7 +740,7 @@ function SceneSettings() {
             style={{ ...chooseBtn, background: '#3f1d2b', borderColor: '#7f1d1d', color: '#fca5a5', marginTop: 8 }}
             onClick={() => updateActiveScene({ background: '#0f172a', backgroundSize: undefined })}
           >
-            ✕ Remove image
+            ✕ Remove background media
           </button>
         </>
       )}
@@ -1070,7 +1080,7 @@ function CollectionFields({
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
-                const rel = await importContentFile("media");
+                const rel = await importVideoAware("media");
                 if (rel) patchItem(it.id, { image: rel });
               }}
               title="Choose focused image or video"

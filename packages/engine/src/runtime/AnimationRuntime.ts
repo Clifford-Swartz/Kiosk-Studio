@@ -25,6 +25,24 @@ interface ActiveTween {
 }
 
 /**
+ * A media scrub tween. Unlike ActiveTween, the target isn't an element schema
+ * field resolved through the override pipeline — it's `HTMLVideoElement.currentTime`,
+ * imperative DOM state reached via `applyMediaTime`. Kept as a separate map/type
+ * because there's no schema field, no decompose/lerp-into-props step, and no
+ * persist-to-overrides on completion (currentTime is itself persistent state).
+ */
+interface ActiveMediaScrub {
+  elementId: string;
+  from: number;
+  to: number;
+  startTime: number;
+  duration: number;
+  delay: number;
+  easing: EasingCurve;
+  onComplete?: () => void;
+}
+
+/**
  * Animation runtime manages property tweens triggered by interactions.
  * Applies as final layer in rendering pipeline (overrides bindings/states/setProp).
  *
@@ -38,12 +56,14 @@ interface ActiveTween {
  */
 export class AnimationRuntime {
   private activeTweens: Map<string, ActiveTween> = new Map();
+  private activeMediaScrubs: Map<string, ActiveMediaScrub> = new Map();
   private rafId: number | null = null;
   private currentOverrides: Map<string, Partial<Element>> = new Map();
   private elementLookup: ((elementId: string) => Element | null) | null = null;
   private elementResolverFn: ((element: Element) => Element) | null = null;
   private notifyChange: (() => void) | null = null;
   private persistToOverrides: ((elementId: string, property: AnimatableProperty, value: AnimatableValue) => void) | null = null;
+  private applyMediaTime: ((elementId: string, time: number, force: boolean) => void) | null = null;
 
   /**
    * Start a new animation. Returns promise that resolves when animation completes.
@@ -130,6 +150,47 @@ export class AnimationRuntime {
   }
 
   /**
+   * Scrub an `HTMLVideoElement`'s `currentTime` between two points over `duration`,
+   * driven by the same RAF loop as property tweens. Unlike `animate()`, there's no
+   * schema field to write and nothing to persist on completion — `currentTime` is
+   * itself persistent DOM state on the video element `applyMediaTime` reaches.
+   * Also sidesteps Chromium's lack of negative `playbackRate` support: driving
+   * `currentTime` frame-by-frame works in either direction with no special-casing.
+   */
+  scrubMedia(
+    elementId: string,
+    from: number,
+    to: number,
+    duration: number,
+    easing: EasingCurve = "linear",
+    delay = 0
+  ): Promise<void> {
+    if (this.activeMediaScrubs.has(elementId)) {
+      console.warn(`[DEBUG-anim] Media scrub on ${elementId} already running, new scrub blocked`);
+      return Promise.reject(new Error("Scrub blocked: media scrub already running"));
+    }
+
+    return new Promise((resolve) => {
+      const scrub: ActiveMediaScrub = {
+        elementId,
+        from,
+        to,
+        startTime: performance.now(),
+        duration,
+        delay,
+        easing,
+        onComplete: () => {
+          this.activeMediaScrubs.delete(elementId);
+          resolve();
+        },
+      };
+
+      this.activeMediaScrubs.set(elementId, scrub);
+      this.startLoop();
+    });
+  }
+
+  /**
    * Cancel all animations on a specific element (called when visibility=false).
    */
   cancelElement(elementId: string): void {
@@ -142,6 +203,7 @@ export class AnimationRuntime {
     for (const key of keysToDelete) {
       this.activeTweens.delete(key);
     }
+    this.activeMediaScrubs.delete(elementId);
     if (keysToDelete.length > 0) {
       this.updateOverrides();
     }
@@ -152,6 +214,7 @@ export class AnimationRuntime {
    */
   cancelAll(): void {
     this.activeTweens.clear();
+    this.activeMediaScrubs.clear();
     this.currentOverrides.clear();
     this.stopLoop();
   }
@@ -191,6 +254,17 @@ export class AnimationRuntime {
    */
   setPersistToOverrides(callback: ((elementId: string, property: AnimatableProperty, value: AnimatableValue) => void) | null): void {
     this.persistToOverrides = callback;
+  }
+
+  /**
+   * Set the callback that writes a media scrub's interpolated time onto the
+   * actual `HTMLVideoElement` (called by Player; reaches the video via its ref map).
+   * `force` is true only for the final write of a scrub — the callback should
+   * apply it unconditionally so the video always lands exactly on `to`, even
+   * if a previous seek is still in flight (see `tick()`).
+   */
+  setApplyMediaTime(callback: ((elementId: string, time: number, force: boolean) => void) | null): void {
+    this.applyMediaTime = callback;
   }
 
   /**
@@ -273,7 +347,37 @@ export class AnimationRuntime {
       tween.onComplete?.();
     }
 
-    if (hasActiveTweens) {
+    let hasActiveScrubs = false;
+    const completedScrubs: ActiveMediaScrub[] = [];
+
+    for (const scrub of this.activeMediaScrubs.values()) {
+      const elapsed = now - scrub.startTime;
+
+      if (elapsed < scrub.delay) {
+        hasActiveScrubs = true;
+        continue;
+      }
+
+      const progress = Math.min(1, (elapsed - scrub.delay) / scrub.duration);
+      const easedProgress = ease(scrub.easing, progress);
+
+      // Below 1, let Player drop the write if a seek is still decoding (avoids
+      // queuing seeks the decoder can't keep up with — see applyMediaTime doc).
+      // At completion, force it so the video always lands exactly on `to`.
+      this.applyMediaTime?.(scrub.elementId, lerp(scrub.from, scrub.to, easedProgress), progress >= 1);
+
+      if (progress >= 1) {
+        completedScrubs.push(scrub);
+      } else {
+        hasActiveScrubs = true;
+      }
+    }
+
+    for (const scrub of completedScrubs) {
+      scrub.onComplete?.();
+    }
+
+    if (hasActiveTweens || hasActiveScrubs) {
       this.rafId = requestAnimationFrame(this.tick);
     } else {
       console.log(`[DEBUG-anim] tick(): No more active tweens, stopping loop`);

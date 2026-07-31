@@ -16,6 +16,14 @@ export interface PlayerContext {
   playAudio: (elementId: string) => void;
   togglePlayVideo: (elementId: string) => void;
   seekVideo: (elementId: string, time: number) => void;
+  scrubVideo: (
+    elementId: string,
+    from: number | undefined,
+    to: number,
+    duration: number,
+    easing?: EasingCurve,
+    delay?: number
+  ) => Promise<void>;
   setVolume: (elementId: string, volume: number) => void;
   setSpeed: (elementId: string, rate: number) => void;
   animate: (
@@ -163,6 +171,28 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
       } else {
         warn("seekVideo needs params.target (string) and params.time (number)");
       }
+      return;
+    }
+
+    case "scrubVideo": {
+      const target = action.params.target;
+      const from = action.params.from;
+      const to = action.params.to;
+      const duration = action.params.duration;
+      const easing = action.params.easing;
+      const delay = action.params.delay;
+      if (typeof target !== "string" || typeof to !== "number" || typeof duration !== "number") {
+        warn("scrubVideo needs params.target (string), params.to (number), and params.duration (number)");
+        return;
+      }
+      await ctx.scrubVideo(
+        target,
+        typeof from === "number" ? from : undefined,
+        to,
+        duration,
+        (easing as EasingCurve) ?? "linear",
+        (delay as number) ?? 0
+      );
       return;
     }
 

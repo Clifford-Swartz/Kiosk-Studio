@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Element, Project, Scene } from "../model/types.js";
-import { ElementRenderer, resolveSrc } from "./ElementRenderer.js";
+import { ElementRenderer, resolveSrc, isVideoSrc } from "./ElementRenderer.js";
 import { runInteraction, type PlayerContext } from "../runtime/interactions.js";
 import { elementResolver, bindingHost, overrideHost } from "../data/ElementResolver.js";
 import { createTransitionController } from "../runtime/TransitionController.js";
@@ -24,6 +24,8 @@ export interface PlayerProps {
   hideAudioIcons?: boolean;
   /** True when rendering in editor mode; disables button interaction overlays. */
   editorMode?: boolean;
+  /** Fired when a video element reports a DECODE/SRC_NOT_SUPPORTED playback error. */
+  onIncompatible?: (elementId: string, src: string) => void;
 }
 
 /**
@@ -37,7 +39,7 @@ interface SceneLayer {
   key: string;
 }
 
-export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false }: PlayerProps) {
+export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false, onIncompatible }: PlayerProps) {
   // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
@@ -137,10 +139,30 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       }
     });
 
+    // Wire media-scrub callback so scrubVideo can write currentTime directly
+    // onto the mounted <video> element (imperative DOM state, not a schema field —
+    // no override pipeline involvement, unlike property tweens above).
+    //
+    // Skip non-final writes while a seek is already decoding (`video.seeking`).
+    // Writing currentTime every rAF (~16ms) without waiting for the browser to
+    // finish the previous seek causes the decoder to fall behind and coalesce
+    // seeks: the picture freezes on the last decoded frame, then jumps once
+    // decoding catches up — visible as choppy jump-cuts rather than a smooth
+    // scrub. Waiting for `seeking` to clear bounds the update rate to what the
+    // decoder can actually keep up with. The final write (`force`) always
+    // applies regardless, so the scrub still lands exactly on `to`.
+    animationRuntime.setApplyMediaTime((elementId, time, force) => {
+      const video = videoElementsRef.current.get(elementId);
+      if (!video) return;
+      if (!force && video.seeking) return;
+      video.currentTime = time;
+    });
+
     return () => {
       elementResolver.setStateProvider(null);
       elementResolver.setAnimationProvider(null);
       animationRuntime.setPersistToOverrides(null);
+      animationRuntime.setApplyMediaTime(null);
     };
   }, [animationRuntime, stateRuntime]);
 
@@ -342,6 +364,16 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         } else {
           console.warn(`[Player] seekVideo: video element ${elementId} not found`);
         }
+      },
+      scrubVideo: async (elementId, from, to, duration, easing, delay) => {
+        const video = videoElementsRef.current.get(elementId);
+        if (!video) {
+          console.warn(`[Player] scrubVideo: video element ${elementId} not found`);
+          return;
+        }
+        video.pause();
+        const resolvedFrom = from ?? video.currentTime;
+        await animationRuntime.scrubMedia(elementId, resolvedFrom, to, duration, easing, delay);
       },
       setVolume: (elementId, volume) => {
         const audio = audioElementsRef.current.get(elementId);
@@ -656,10 +688,13 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     // Issue 4 fix: Apply explicit fallback to prevent undefined backgrounds
     const background = scene.background || "#000000";
     const isColor = background.startsWith('#');
+    const isBgVideo = !isColor && isVideoSrc(background);
 
-    // Build background style
-    const backgroundStyle: React.CSSProperties = isColor
-      ? { background }
+    // Build background style. Video backgrounds are rendered as an actual
+    // <video> element below (CSS background-image can't autoplay video), so
+    // this just supplies a color fallback while the video loads.
+    const backgroundStyle: React.CSSProperties = isColor || isBgVideo
+      ? { background: isColor ? background : "#000000" }
       : {
           backgroundImage: `url(${resolveSrc(background, assetBaseUrl)})`,
           backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
@@ -685,6 +720,24 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           ...(isIncomingScene && { display: "none" }),
         }}
       >
+        {isBgVideo && (
+          <video
+            key={`${key}-bg-video`}
+            src={resolveSrc(background, assetBaseUrl)}
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: scene.backgroundSize === 'fill' ? 'fill' : (scene.backgroundSize || 'cover'),
+              objectPosition: scene.backgroundPosition || 'center',
+            }}
+          />
+        )}
         {/* Consolidated SVG defs for all layer masks in this scene */}
         {sceneMasks.length > 0 && (
           <svg
@@ -747,6 +800,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
                 playing
                 onAudioRef={onAudioRef}
                 onVideoRef={onVideoRef}
+                onIncompatible={onIncompatible}
                 editorMode={editorMode}
                 resolveElement={live ? resolveElement : undefined}
               />

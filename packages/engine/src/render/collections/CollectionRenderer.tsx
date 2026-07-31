@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { resolveSrc } from "../ElementRenderer.js";
+import { resolveSrc, isVideoSrc } from "../ElementRenderer.js";
 import { VideoControls } from "../VideoControls.js";
 import { imageLoadQueue } from "../../runtime/ImageLoadQueue.js";
 
@@ -11,14 +11,6 @@ import { imageLoadQueue } from "../../runtime/ImageLoadQueue.js";
  * `playing` gates time-based behavior (Ken Burns auto-advance) so collections
  * sit still while authoring in the editor and animate in the Player.
  */
-
-/**
- * Determines if a source path is a video based on file extension.
- */
-function isVideo(src: string): boolean {
-  const ext = src.split('.').pop()?.toLowerCase();
-  return ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'ogg';
-}
 
 export type CollectionFit = "cover" | "contain" | "fill";
 
@@ -213,7 +205,7 @@ function ItemCard({
   // Use thumbnail for inactive cards when available, full image/video only when active
   const rawSrc = useThumbnail && !isActive ? (item.thumbnail || item.image) : item.image;
   const src = resolveSrc(str(rawSrc), assetBaseUrl);
-  const hasVideo = src && isVideo(src);
+  const hasVideo = src && isVideoSrc(src);
 
   // Queue image loading (priority: active cards = 0, inactive = 1)
   const imageReady = imageLoadQueue.useImageReady(src, isActive ? 0 : 1);
@@ -361,7 +353,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
           {(() => {
             const item = list[focusedIndex];
             const src = resolveSrc(str(item.image), assetBaseUrl);
-            const hasVideo = src && isVideo(src);
+            const hasVideo = src && isVideoSrc(src);
             return (
               <>
                 {src ? (
@@ -605,7 +597,7 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
     if (!playing || n <= 1) return;
     const currentItem = list[idx];
     const src = resolveSrc(str(currentItem?.image), assetBaseUrl);
-    const hasVideo = src && isVideo(src);
+    const hasVideo = src && isVideoSrc(src);
 
     // Only use timer for image items (videos use ended event via parent component)
     if (hasVideo) return;
@@ -618,7 +610,7 @@ function KenBurns({ list, props, assetBaseUrl, videoRefs, activeIndex, setActive
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#0b1016" }}>
       {list.map((it, i) => {
         const src = resolveSrc(str(it.image), assetBaseUrl);
-        const hasVideo = src && isVideo(src);
+        const hasVideo = src && isVideoSrc(src);
         const isCur = i === idx;
         return (
           <div

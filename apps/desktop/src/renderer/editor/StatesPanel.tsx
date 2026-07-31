@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useEditor } from "./store.js";
-import { importContentFile } from "./assets.js";
+import { importContentFile, importVideoAware } from "./assets.js";
 import { Row } from "./components/Row.js";
 
 /**
@@ -308,7 +308,7 @@ function StateEditor({
               cursor: "pointer",
             }}
           >
-            <div style={{ fontWeight: 500 }}>{el.type} · {elementId.slice(0, 8)}</div>
+            <div style={{ fontWeight: 500 }}>{el.name || el.type}</div>
             <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>
               {totalCount === 0 ? "No overrides" : `${totalCount} override${totalCount === 1 ? "" : "s"}`}
             </div>
@@ -423,16 +423,26 @@ function ElementOverrides({
         State: {stateName}
       </div>
       <div style={{ color: "#94a3b8", fontSize: 12, margin: "4px 4px 8px" }}>
-        Element: {element.type} · {elementId.slice(0, 8)}
+        Element: {element.name || element.type}
       </div>
 
-      <Row label="Visible">
-        <input
-          type="checkbox"
-          checked={overrides.visible ?? true}
-          onChange={(e) => updateOverrides({ visible: e.target.checked })}
-        />
-      </Row>
+      {element.type === "button" ? (
+        <Row label="Disabled">
+          <input
+            type="checkbox"
+            checked={overrides.visible === false}
+            onChange={(e) => updateOverrides({ visible: !e.target.checked })}
+          />
+        </Row>
+      ) : (
+        <Row label="Visible">
+          <input
+            type="checkbox"
+            checked={overrides.visible ?? true}
+            onChange={(e) => updateOverrides({ visible: e.target.checked })}
+          />
+        </Row>
+      )}
 
       <div style={{ ...heading, marginTop: 14 }}>Property Overrides</div>
 
@@ -524,7 +534,7 @@ function ElementOverrides({
                     }
                     // Determine file type based on element type
                     const fileType = element.type === "video" ? "video" : element.type === "audio" ? "audio" : "image";
-                    const rel = await importContentFile(fileType);
+                    const rel = fileType === "video" ? await importVideoAware("video") : await importContentFile(fileType);
                     if (rel) setPropOverride(key, rel);
                   }}
                 >

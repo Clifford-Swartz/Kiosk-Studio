@@ -50,6 +50,7 @@ export const ActionTypeSchema = z.enum([
   "setState",
   "togglePlayPause",
   "seekVideo",
+  "scrubVideo",
   "setVolume",
   "setSpeed",
   "parallel",
@@ -267,6 +268,7 @@ export interface ElementShape {
   tint?: z.infer<typeof LayerTintSchema>;
   mask?: z.infer<typeof LayerMaskSchema>;
   locked?: boolean;
+  visible?: boolean;
   children?: ElementShape[];
 }
 
@@ -292,6 +294,7 @@ export interface ElementInput {
   tint?: z.input<typeof LayerTintSchema>;
   mask?: z.input<typeof LayerMaskSchema>;
   locked?: boolean;
+  visible?: boolean;
   children?: ElementInput[];
 }
 
@@ -313,6 +316,7 @@ export const ElementSchema: z.ZodType<ElementShape, z.ZodTypeDef, ElementInput> 
     tint: LayerTintSchema.optional(),
     mask: LayerMaskSchema.optional(),
     locked: z.boolean().default(false),
+    visible: z.boolean().default(true),
     children: z.array(ElementSchema).optional(),
   })
 );
