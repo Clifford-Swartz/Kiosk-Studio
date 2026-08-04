@@ -14,7 +14,8 @@ const EMU_PER_PX = 914400 / 96; // 9525
 
 /** One paragraph (line) of a text box, with its own resolved style. */
 export interface PptxLine {
-  text: string;       // includes bullet prefix/indent if bulleted
+  text: string;       // raw paragraph text — no bullet glyph baked in, see `list`
+  list?: { kind: "bullet" | "number"; level: number };
   fontPt?: number;
   color?: string;
   bold?: boolean;
@@ -1115,20 +1116,22 @@ function masterTextStyles(
 }
 
 /**
- * Bullet prefix for a paragraph at list level `lvl`. PowerPoint encodes bullets
- * in pPr (buChar/buAutoNum/buNone); we approximate with a simple glyph + indent
- * by level so the imported text reads like a bulleted list. A paragraph with an
- * explicit a:buNone gets no prefix.
+ * List classification for a paragraph at list level `lvl`, from its pPr
+ * bullet element (buChar/buAutoNum/buNone). Structured (kind + level) rather
+ * than a baked-in glyph, so the editor/renderer can style bullets/numbers
+ * itself (see RichTextParagraph.list) instead of matching a literal prefix.
  */
-function bulletPrefix(ppr: Record<string, unknown> | undefined, lvl: number): string {
+function bulletInfo(
+  ppr: Record<string, unknown> | undefined,
+  lvl: number
+): { kind: "bullet" | "number"; level: number } | undefined {
   // Body placeholders are bulleted by default in PowerPoint — a paragraph
   // with NO pPr at all (the common case; PowerPoint only emits pPr when a
   // paragraph deviates from the level default) is still bulleted. Only an
-  // explicit a:buNone suppresses the bullet.
-  if (ppr && "a:buNone" in ppr) return "";
-  const indent = "  ".repeat(Math.max(0, lvl));
-  const glyph = lvl > 0 ? "◦ " : "• ";
-  return indent + glyph;
+  // explicit a:buNone suppresses it.
+  if (ppr && "a:buNone" in ppr) return undefined;
+  const kind = ppr && "a:buAutoNum" in ppr ? "number" : "bullet";
+  return { kind, level: Math.max(0, lvl) };
 }
 
 /**
@@ -1221,15 +1224,13 @@ function shapeLines(
 
     style.fontPt = style.fontPt != null ? clampFontPt(applyScale(style.fontPt)!) : undefined;
 
-    // Compose the visible text: bullet prefix for non-title body paragraphs, but
-    // only when the shape is a real placeholder/list body — plain autoshapes
-    // (diagram box labels etc.) never had bullets in PowerPoint.
-    let prefix = "";
-    if (!isTitle && isPlaceholder && raw.trim()) {
-      prefix = bulletPrefix(ppr, lvl);
-    }
+    // List classification for non-title body paragraphs, but only when the
+    // shape is a real placeholder/list body — plain autoshapes (diagram box
+    // labels etc.) never had bullets in PowerPoint.
+    const list = !isTitle && isPlaceholder && raw.trim() ? bulletInfo(ppr, lvl) : undefined;
     lines.push({
-      text: prefix + raw,
+      text: raw,
+      list,
       fontPt: style.fontPt,
       color: style.color,
       bold: style.bold,

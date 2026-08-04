@@ -1,4 +1,4 @@
-import { createElement, createProject, createScene, newId, type Project } from "@kiosk/engine";
+import { createElement, createProject, createScene, newId, type Project, type RichTextDoc } from "@kiosk/engine";
 import type { ParsedDeckWire } from "@kiosk/pptx";
 import { ensureProjectSaved } from "./assets.js";
 
@@ -67,24 +67,35 @@ export async function buildProjectFromDeck(
       for (const t of slide.texts) {
         // pt → px (×1.333) then scale to canvas.
         const toPx = (pt?: number) => Math.round((pt ?? 18) * 1.333 * scale);
-        // Per-line runs preserve mixed styling (e.g. bold lvl-0 bullets,
-        // non-bold sub-bullets) that a single box style can't represent.
-        const runs = (t.lines ?? []).map((l) => ({
-          text: l.text,
-          fontSize: toPx(l.fontPt),
-          color: l.color ?? t.color ?? "#0f172a",
-          fontWeight: l.bold ? "700" : "normal",
+        // One paragraph per PptxLine, each a single span carrying that line's
+        // resolved style — preserves mixed styling (e.g. bold lvl-0 bullets,
+        // non-bold sub-bullets) that a single box style can't represent, and
+        // carries list metadata straight through to RichTextParagraph.list.
+        const paragraphs = (t.lines ?? []).map((l) => ({
+          spans: [
+            {
+              text: l.text,
+              bold: l.bold || undefined,
+              italic: l.italic || undefined,
+              underline: l.underline || undefined,
+              color: l.color ?? t.color ?? "#0f172a",
+            },
+          ],
           align: l.align ?? t.align ?? "left",
-          ...(l.italic ? { fontStyle: "italic" } : {}),
-          ...(l.underline ? { textDecoration: "underline" } : {}),
+          fontSize: toPx(l.fontPt),
+          ...(l.list ? { list: l.list } : {}),
         }));
+        const content: RichTextDoc = {
+          version: 1,
+          paragraphs: paragraphs.length ? paragraphs : [{ spans: [{ text: t.text }] }],
+        };
         elements.push(
           createElement("text", {
             x: px(t.x), y: px(t.y), width: px(t.width), height: px(t.height),
             zIndex: elements.length + 1,
             props: {
               text: t.text,
-              ...(runs.length ? { runs } : {}),
+              content,
               color: t.color ?? "#0f172a",
               fontSize: toPx(t.fontPt),
               fontWeight: t.bold ? "700" : "normal",

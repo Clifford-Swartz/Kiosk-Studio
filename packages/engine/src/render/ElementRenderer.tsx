@@ -5,6 +5,7 @@ import { VideoControls } from "./VideoControls.js";
 import { eventBus } from "../events/EventBus.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
 import { VisibilityManager } from "../runtime/VisibilityManager.js";
+import { plainTextToRichTextDoc, type RichTextDoc } from "../model/richText.js";
 
 export interface ElementRendererProps {
   element: Element;
@@ -39,6 +40,31 @@ export interface ElementRendererProps {
    * scene-state and binding overrides the same as top-level elements.
    */
   resolveElement?: (element: Element) => Element;
+  /**
+   * Nearest ancestor "layer" id of the currently-selected element (null for the
+   * root/base layer). Editor-only dimming (see `editorDim` below) only applies
+   * within this layer, so switching selection to a different layer stops
+   * showing invisible elements elsewhere.
+   */
+  activeLayerId?: string | null;
+  /**
+   * Nearest ancestor "layer" id of the element currently being rendered (null
+   * at the root). Threaded through recursive children by this component —
+   * callers should not pass this explicitly except when re-rendering a
+   * "layer" element's own children.
+   */
+  currentLayerId?: string | null;
+  /**
+   * Ids of "layer" elements that should dim (rather than fully hide) when
+   * invisible: the layer itself is selected, or the selection is somewhere
+   * inside it. A layer container is its own dimming boundary — unlike a leaf
+   * element (governed by activeLayerId/currentLayerId "same layer" sibling
+   * matching), a layer's own visibility must key off selection *containment*,
+   * since dimming it to 0.4 opacity cascades (via CSS opacity) to every
+   * descendant regardless of each child's own visible flag. Same reference
+   * passed unchanged through recursion — only consulted for type === "layer".
+   */
+  dimmableLayerIds?: Set<string> | null;
 }
 
 // Embedded fallback: 1×1 transparent PNG data URI (for empty src fields)
@@ -95,7 +121,7 @@ export function isVideoSrc(src: string): boolean {
  *
  * Memoized to prevent unnecessary re-renders when parent updates but element props unchanged.
  */
-export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, onIncompatible, editorMode, resolveElement }: ElementRendererProps) {
+export const ElementRenderer = React.memo(function ElementRenderer({ element, onTap, onHover, onHoverEnd, onPress, onRelease, assetBaseUrl, playing, onAudioRef, onVideoRef, onIncompatible, editorMode, resolveElement, activeLayerId = null, currentLayerId = null, dimmableLayerIds = null }: ElementRendererProps) {
   const { type, x, y, width, height, rotation, opacity, zIndex, props } =
     element;
 
@@ -112,8 +138,21 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
   // visible=false forces opacity to 0 unconditionally — this is the one place
   // that enforces it, so a running animation tween can't fight a `visible:
   // false` override back to non-zero (see ADR 0013).
-  const editorDim = editorMode && !visible && opacity > 0;
-  const renderOpacity = editorMode ? (editorDim ? 0.4 : opacity) : (visible ? opacity : 0);
+  // Scoped to the selection's layer: an invisible element only dims while the
+  // selection is in the same layer (both null == root/base layer). Selecting
+  // into a different layer hides it fully again, same as outside the editor.
+  // A "layer" element is its own boundary rather than a sibling at someone
+  // else's level, so it uses selection *containment* (self-or-descendant)
+  // instead of the "same nearest layer" sibling match leaves use — otherwise
+  // an invisible layer would dim whenever any sibling at its own level is
+  // selected (not actually inside it), and stay hidden when its own contents
+  // are selected (since selecting into the layer changes ITS nearest-layer
+  // context, not the layer element's own).
+  const editorDim = editorMode && !visible && opacity > 0 &&
+    (type === "layer" ? (dimmableLayerIds?.has(element.id) ?? false) : currentLayerId === activeLayerId);
+  const renderOpacity = editorMode
+    ? (visible ? opacity : (editorDim ? 0.4 : 0))
+    : (visible ? opacity : 0);
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -175,6 +214,10 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
       }
     : undefined;
 
+  // A "layer" container becomes its own children's nearest-layer context;
+  // any other container (e.g. "collection") passes its own context through.
+  const childLayerId = type === "layer" ? element.id : currentLayerId;
+
   const children = element.children?.map((child) => {
     const resolvedChild = resolveElement ? resolveElement(child) : child;
     return (
@@ -193,6 +236,9 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
         onVideoRef={onVideoRef}
         onIncompatible={onIncompatible}
         resolveElement={resolveElement}
+        activeLayerId={activeLayerId}
+        currentLayerId={childLayerId}
+        dimmableLayerIds={dimmableLayerIds}
       />
     );
   });
@@ -218,11 +264,20 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
         </div>
       );
 
-    case "text":
+    case "text": {
+      // A binding targeting "text"/"label" can only write a plain string
+      // (see ElementResolver.resolveBindings) — it never touches
+      // `props.content`, so a bound live value must win over stale rich
+      // content rather than being silently shadowed by it.
+      const boundToText = element.bindings?.some((b) => {
+        const key = b.targetProp.startsWith("props.") ? b.targetProp.slice(6) : b.targetProp;
+        return key === "text" || key === "label";
+      }) ?? false;
       return (
         <TextElement
           elementId={element.id}
           props={props}
+          boundToText={boundToText}
           baseStyle={baseStyle}
           width={width}
           height={height}
@@ -235,6 +290,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
           {children}
         </TextElement>
       );
+    }
 
     case "image": {
       const imageSrc = resolveSrc(str(props.src, ""), assetBaseUrl);
@@ -594,7 +650,14 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
       return (
         <div
           data-element-id={element.id}
-          style={{ ...baseStyle, overflow: "hidden", pointerEvents: "auto" }}
+          style={{
+            ...baseStyle,
+            overflow: "hidden",
+            // Outside the editor, an invisible collection must not intercept
+            // clicks meant for elements below it. Editor mode keeps it
+            // selectable (matches editorDim's "stay clickable while dimmed").
+            pointerEvents: !editorMode && !visible ? "none" : "auto",
+          }}
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
@@ -607,6 +670,7 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
             props={props}
             assetBaseUrl={assetBaseUrl}
             playing={playing}
+            interactive={visible}
           />
         </div>
       );
@@ -622,6 +686,9 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
     prevProps.playing === nextProps.playing &&
     prevProps.assetBaseUrl === nextProps.assetBaseUrl &&
     prevProps.editorMode === nextProps.editorMode &&
+    prevProps.activeLayerId === nextProps.activeLayerId &&
+    prevProps.currentLayerId === nextProps.currentLayerId &&
+    prevProps.dimmableLayerIds === nextProps.dimmableLayerIds &&
     prevProps.onTap === nextProps.onTap &&
     prevProps.onHover === nextProps.onHover &&
     prevProps.onHoverEnd === nextProps.onHoverEnd &&
@@ -835,7 +902,7 @@ function AudioElement({ element, baseStyle, assetBaseUrl, playing, onTap, onAudi
   );
 }
 
-// --- video element with Video.js -------------------------------------------
+// --- video element ------------------------------------------------------
 
 interface VideoElementProps {
   element: Element;
@@ -976,7 +1043,7 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, onIncompatib
   }, [element.id, playing, props.autoplay, hasSource, src]);
 
   const showControls = bool(props.showControls, false);
-  const isVisible = (baseStyle.opacity ?? 1) > 0;
+  const isVisible = Number(baseStyle.opacity ?? 1) > 0;
   return (
     <div
       ref={containerRef}
@@ -1065,31 +1132,24 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, onIncompatib
   );
 }
 
-// --- text element (per-line rich text + autofit) ----------------------------
-
-interface TextRun {
-  text: string;
-  fontSize?: number;
-  color?: string;
-  fontWeight?: string;
-  fontStyle?: string;
-  textDecoration?: string;
-  align?: "left" | "center" | "right";
-}
+// --- text element (per-character rich text + autofit) ----------------------
 
 const LINE_HEIGHT = 1.15; // tight, close to PowerPoint's default
+const LIST_INDENT_PX = 28;
 
 /**
- * A text box. Supports per-line rich text (`props.runs`: each line carries its
- * own weight/size/color, so a box can have bold top-level bullets and non-bold
- * sub-bullets) with a fallback to the single box-level style. Mirrors
- * PowerPoint's normAutofit by MEASURING the rendered content and shrinking the
- * font uniformly until it fits the box height (PowerPoint computes that shrink
- * live, so the stored fontScale is usually absent and we can't trust it).
+ * A text box. Renders `props.content` (a `RichTextDoc`: paragraphs of spans,
+ * each span carrying its own bold/italic/underline/color, each paragraph
+ * carrying optional align/fontSize/list) with a fallback to the single
+ * box-level style. Mirrors PowerPoint's normAutofit by MEASURING the rendered
+ * content and shrinking the font uniformly until it fits the box height
+ * (PowerPoint computes that shrink live, so the stored fontScale is usually
+ * absent and we can't trust it).
  */
 function TextElement({
   elementId,
   props,
+  boundToText,
   baseStyle,
   width,
   height,
@@ -1102,6 +1162,7 @@ function TextElement({
 }: {
   elementId: string;
   props: Record<string, unknown>;
+  boundToText: boolean;
   baseStyle: React.CSSProperties;
   width: number;
   height: number;
@@ -1119,7 +1180,6 @@ function TextElement({
   const baseWeight = str(props.fontWeight, "normal");
   const baseFontStyle = str(props.fontStyle, "normal");
   const baseTextDecoration = str(props.textDecoration, "none");
-  const runs = parseRuns(props.runs);
 
   const innerRef = React.useRef<HTMLDivElement>(null);
   const [fit, setFit] = React.useState(1);
@@ -1129,7 +1189,7 @@ function TextElement({
   // resized larger in the editor) is re-measured from full size.
   React.useLayoutEffect(() => {
     setFit(1);
-  }, [width, height, baseFontSize, props.text, props.runs]);
+  }, [width, height, baseFontSize, props.content, props.text, boundToText]);
 
   React.useLayoutEffect(() => {
     const el = innerRef.current;
@@ -1144,7 +1204,13 @@ function TextElement({
     }
   });
 
-  const lines = runs ?? [{ text: str(props.text, "") }];
+  // A binding writing to props.text/label overrides any (possibly stale)
+  // rich content — see the `boundToText` comment at the call site.
+  const doc: RichTextDoc = boundToText
+    ? plainTextToRichTextDoc(str(props.text, ""))
+    : parseContent(props.content) ?? plainTextToRichTextDoc(str(props.text, ""));
+
+  const numberCounters: number[] = [];
 
   return (
     <div
@@ -1177,25 +1243,52 @@ function TextElement({
       onPointerUp={onPointerUp}
     >
       <div ref={innerRef} style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: justify }}>
-        {lines.map((r, i) => {
-          const blank = !r.text.trim();
+        {doc.paragraphs.map((p, i) => {
+          const blank = p.spans.length === 0 || !p.spans.some((s) => s.text.trim());
+          const paragraphAlign = (p.align ?? align) as React.CSSProperties["textAlign"];
+          const fontSize = (p.fontSize ?? baseFontSize) * fit;
+
+          if (p.list) {
+            const level = Math.max(0, p.list.level);
+            if (p.list.kind === "number") {
+              numberCounters[level] = (numberCounters[level] ?? 0) + 1;
+              numberCounters.length = level + 1; // deeper levels restart under a new item
+            } else {
+              numberCounters.length = 0;
+            }
+            const marker = p.list.kind === "number" ? `${numberCounters[level]}.` : "•";
+            return (
+              <div
+                key={i}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 8,
+                  paddingLeft: level * LIST_INDENT_PX,
+                  lineHeight: LINE_HEIGHT,
+                  textAlign: paragraphAlign,
+                }}
+              >
+                <span style={{ flexShrink: 0, fontSize, color: baseColor }}>{marker}</span>
+                <span style={{ flex: 1 }}>{renderSpans(p.spans, fontSize, baseColor, baseWeight, baseFontStyle, baseTextDecoration)}</span>
+              </div>
+            );
+          }
+
+          numberCounters.length = 0;
           return (
             <div
               key={i}
               style={{
                 width: "100%",
-                color: r.color ?? baseColor,
-                fontSize: (r.fontSize ?? baseFontSize) * fit,
                 // Blank paragraphs are spacing — render at half height so a run
                 // of them doesn't push content off the box.
                 lineHeight: blank ? 0.5 : LINE_HEIGHT,
-                fontWeight: r.fontWeight ?? baseWeight,
-                fontStyle: r.fontStyle ?? baseFontStyle,
-                textDecoration: r.textDecoration ?? baseTextDecoration,
-                textAlign: (r.align ?? align) as React.CSSProperties["textAlign"],
+                textAlign: paragraphAlign,
               }}
             >
-              {r.text || " "}
+              {blank ? " " : renderSpans(p.spans, fontSize, baseColor, baseWeight, baseFontStyle, baseTextDecoration)}
             </div>
           );
         })}
@@ -1205,42 +1298,41 @@ function TextElement({
   );
 }
 
-/** Like `str`/`num` but for an optional field with no sensible fallback value
- * (the caller should just omit the field) — still warns when present-but-wrong. */
-function optStr(v: unknown): string | undefined {
-  if (v === undefined || v === null) return undefined;
-  if (typeof v === "string") return v;
-  warnBadProp("string", v);
-  return undefined;
-}
-function optNum(v: unknown): number | undefined {
-  if (v === undefined || v === null) return undefined;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  warnBadProp("finite number", v);
-  return undefined;
+function renderSpans(
+  spans: RichTextDoc["paragraphs"][number]["spans"],
+  fontSize: number,
+  baseColor: string,
+  baseWeight: string,
+  baseFontStyle: string,
+  baseTextDecoration: string,
+): React.ReactNode {
+  return spans.map((s, i) => (
+    <span
+      key={i}
+      style={{
+        fontSize,
+        color: s.color ?? baseColor,
+        fontWeight: s.bold ? "bold" : baseWeight,
+        fontStyle: s.italic ? "italic" : baseFontStyle,
+        textDecoration: s.underline ? "underline" : baseTextDecoration,
+      }}
+    >
+      {s.text || (spans.length === 1 ? " " : "")}
+    </span>
+  ));
 }
 
-/** Coerce an untyped `props.runs` into a clean TextRun[], or null if absent. */
-function parseRuns(v: unknown): TextRun[] | null {
-  if (!Array.isArray(v) || v.length === 0) return null;
-  return v.map((raw) => {
-    const o = (raw ?? {}) as Record<string, unknown>;
-    const run: TextRun = { text: str(o.text, "") };
-    const fontSize = optNum(o.fontSize);
-    if (fontSize !== undefined) run.fontSize = fontSize;
-    const color = optStr(o.color);
-    if (color !== undefined) run.color = color;
-    const fontWeight = optStr(o.fontWeight);
-    if (fontWeight !== undefined) run.fontWeight = fontWeight;
-    const fontStyle = optStr(o.fontStyle);
-    if (fontStyle !== undefined) run.fontStyle = fontStyle;
-    const textDecoration = optStr(o.textDecoration);
-    if (textDecoration !== undefined) run.textDecoration = textDecoration;
-    if (o.align === "left" || o.align === "center" || o.align === "right") run.align = o.align;
-    else if (o.align !== undefined && o.align !== null) warnBadProp('"left" | "center" | "right"', o.align);
-    return run;
-  });
+/** Validates `props.content` as a `RichTextDoc`, or null if absent/malformed. */
+function parseContent(v: unknown): RichTextDoc | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if (o.version === 1 && Array.isArray(o.paragraphs)) return o as unknown as RichTextDoc;
+  }
+  warnBadProp("RichTextDoc", v);
+  return null;
 }
+
 
 // --- small prop coercion helpers (props are Record<string, unknown>) -------
 

@@ -28,6 +28,8 @@ export interface CollectionRendererProps {
   props: Record<string, unknown>;
   assetBaseUrl?: string;
   playing?: boolean;
+  /** False when the collection itself is invisible — items must not intercept clicks. */
+  interactive?: boolean;
 }
 
 function str(v: unknown, fallback = ""): string {
@@ -49,6 +51,7 @@ export function CollectionRenderer({
   props,
   assetBaseUrl,
   playing = false,
+  interactive = true,
 }: CollectionRendererProps) {
   const layout = str(props.layout, "grid");
   const fit = str(props.fit, "cover") as CollectionFit;
@@ -117,7 +120,7 @@ export function CollectionRenderer({
     };
   }, []);
 
-  const common = { list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex, fit };
+  const common = { list, props, assetBaseUrl, width, height, videoRefs, activeIndex, setActiveIndex, fit, interactive };
 
   switch (layout) {
     case "carousel":
@@ -288,11 +291,12 @@ interface LayoutProps {
   activeIndex: number | null;
   setActiveIndex: (idx: number | null) => void;
   fit: CollectionFit;
+  interactive: boolean;
 }
 
 // --- grid ------------------------------------------------------------------
 
-function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, fit, playing }: LayoutProps & { playing?: boolean }) {
+function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveIndex, fit, interactive, playing }: LayoutProps & { playing?: boolean }) {
   const columns = Math.max(1, num(props.columns, 3));
   const gap = num(props.gap, 16);
   const focusedIndex = activeIndex;
@@ -314,7 +318,7 @@ function Grid({ list, props, assetBaseUrl, videoRefs, activeIndex, setActiveInde
           gridAutoRows: "minmax(160px, auto)",
           boxSizing: "border-box",
           opacity: isFocused ? 0 : 1,
-          pointerEvents: isFocused ? "none" : "auto",
+          pointerEvents: isFocused || !interactive ? "none" : "auto",
           transition: "opacity 300ms ease",
         }}
       >

@@ -1,4 +1,5 @@
 import type { Element, ElementType, Project, Scene } from "./types.js";
+import { plainTextToRichTextDoc } from "./richText.js";
 
 /**
  * Factories for new model objects. The editor (and any future tooling) build
@@ -24,7 +25,13 @@ const TYPE_DEFAULTS: Record<
   text: {
     width: 480,
     height: 80,
-    props: { text: "Text", color: "#ffffff", fontSize: 40, align: "left" },
+    props: {
+      text: "Text",
+      content: plainTextToRichTextDoc("Text"),
+      color: "#ffffff",
+      fontSize: 40,
+      align: "left",
+    },
   },
   image: {
     width: 320,
@@ -159,7 +166,7 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
 export function createProject(partial: Partial<Project> = {}): Project {
   const scenes = partial.scenes ?? [createScene({ name: "Home" })];
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: partial.id ?? newId("proj"),
     name: partial.name ?? "Untitled",
     width: partial.width ?? 1920,

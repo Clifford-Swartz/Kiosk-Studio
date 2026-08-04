@@ -80,6 +80,10 @@ A button's own on/off checkbox writes to this same `visible` field — no separa
 - **`CollectionRenderer`'s decorative per-item opacity** (carousel/wheel/kenburns fades). It doesn't read element-level `visible`/`opacity` and isn't part of this consolidation.
 - **Image crop-mode path.** `ElementRenderer`'s image element builds its style without spreading `baseStyle` when cropping, so cropped images don't pick up editor-dim treatment. Pre-existing quirk, not introduced by this change.
 
+## Update (2026-07)
+
+The `__hidden` override key described above as "deprecated" has been removed. `toggleOverride` and `applyOverrides` (`ElementResolver`) now write/read `visible` directly — the double-negation through a separate `__hidden` flag was pure indirection, since `applyOverrides` already had a generic `visible` handler from this same ADR. `ctx.toggleVisibility` (`Player.tsx`) now calls `overrideHost.toggleOverride(elementId, "visible")`. No schema or persisted-data change: the override store is runtime-only, and the `toggle` interaction action's shape is unchanged — only the internal storage key collapsed onto the one the rest of the pipeline already used.
+
 ## Alternatives Considered
 
 ### New `enabled` field duplicating `visible` (rejected)

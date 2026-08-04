@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 import type { Binding, Element } from "../model/types.js";
 import { ANIMATABLE_PROPS } from "../runtime/PropertyRegistry.js";
 import { eventBus } from "../events/EventBus.js";
+import { VisibilityManager } from "../runtime/VisibilityManager.js";
+import { plainTextToRichTextDoc } from "../model/richText.js";
 
 /**
  * External state provider (StateRuntime).
@@ -59,7 +61,7 @@ export interface BindingHost {
  * Interaction-facing interface: update runtime overrides (ephemeral mutations).
  */
 export interface OverrideHost {
-  /** Set an override on an element prop. Special key "__hidden" sets opacity to 0. */
+  /** Set an override on an element prop. */
   setOverride(elementId: string, key: string, value: unknown): void;
 
   /** Toggle a boolean override. Returns new value. */
@@ -144,7 +146,13 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
 
   toggleOverride(elementId: string, key: string): boolean {
     const cur = this.overrides.get(elementId) ?? {};
-    const next = !cur[key];
+    // "visible" flips based on the element's actual last-resolved visibility
+    // (not the raw override flag) so repeated toggles track reality even if
+    // visibility changed via bindings/state rather than this override.
+    const next =
+      key === "visible"
+        ? !VisibilityManager.isVisible(this.cache.get(elementId)?.resolved ?? {})
+        : !cur[key];
     this.overrides.set(elementId, { ...cur, [key]: next });
     this.bump();
     return next;
@@ -281,9 +289,10 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
     let propsCloned = false;
 
     for (const [key, value] of Object.entries(overrides)) {
-      // Special key: __hidden forces visible false (deprecated, use visible in state overrides)
-      if (key === "__hidden") {
-        next = { ...next, visible: !(value as boolean) };
+      // "visible" is a root-level boolean field (ADR 0013), not geometry (not
+      // numeric) and not a props field — route it directly.
+      if (key === "visible") {
+        next = { ...next, visible: Boolean(value) };
         continue;
       }
 
@@ -301,6 +310,22 @@ class ElementResolverImpl implements ElementResolver, BindingHost, OverrideHost 
         }
         next.props[key] = value;
       }
+    }
+
+    // A plain-string "text" override predates the richtext `content` field
+    // and would otherwise be silently shadowed by stale `content` at render
+    // time (TextElement prefers `content` when present). Keep them in sync
+    // unless this same override also explicitly set `content`.
+    if (
+      next.type === "text" &&
+      typeof overrides.text === "string" &&
+      overrides.content === undefined
+    ) {
+      if (!propsCloned) {
+        next = { ...next, props: { ...next.props } };
+        propsCloned = true;
+      }
+      next.props.content = plainTextToRichTextDoc(overrides.text);
     }
 
     return next;

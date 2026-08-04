@@ -46,7 +46,7 @@ Central event pipeline for all kiosk system events. Every significant action flo
 
 **Event kinds:** `dataChanged` (connector values), `sceneEnter`/`sceneExit` (navigation), `sessionStart`/`sessionEnd` (Player lifecycle), `elementTap`/`elementHover` (interactions), `videoPlay`/`videoPause`/`videoComplete` (media), `actionRun` (interaction execution).
 
-Producers: Player, interactions.ts, ElementRenderer, data connectors. Consumers: AnalyticsStore (buffers events per sink config). Note: `ElementResolver` is updated directly via `bindingHost.setValue()`, not via an EventBus subscription — see ADR 0007.
+Producers: Player, interactions.ts, ElementRenderer, data connectors. Consumers: AnalyticsStore (buffers events per sink config), `ElementResolver` (subscribes to `dataChanged` internally in its constructor and calls its own `setValue()` — no external caller does this). See ADR 0007.
 
 ### Binding
 A connection from a data connector to an element property. Live data flows through bindings to update rendered elements without mutating the Project.
@@ -60,6 +60,21 @@ A connection from a data connector to an element property. Live data flows throu
 - Text props (`text`, `label`) coerced to string; other props passed through
 
 Intra-frame caching: resolved elements cached by `element.id + version`. Cache clears on dataChanged event and on project structure changes (editor mutations).
+
+**Rich text interaction:** a binding targeting `text`/`label` can only ever write a plain string (the coercion rule above) — it never touches a text element's `props.content` (see Rich Text below). `ElementRenderer` computes `boundToText` per element (any binding targets `text`/`label`) and renders the live bound plain string instead of `props.content` when true, so a binding update is never shadowed by stale rich content.
+
+### Rich Text (2026-08)
+Canonical per-character text model for `text` elements, stored in `props.content` as a `RichTextDoc` (`packages/engine/src/model/richText.ts`): `{version: 1, paragraphs: [{spans: [{text, bold?, italic?, underline?, color?}], align?, fontSize?, list?: {kind: "bullet"|"number", level}}]}`. Pure data — no editor or rendering dependency, so both the engine's read-only `ElementRenderer` and the desktop app's Lexical-based editor consume it directly.
+
+**Editing:** in-canvas Lexical editor (`RichTextEditor.tsx`, via `lexicalAdapter.ts`'s `RichTextDoc ↔ Lexical` conversion) replaces the plain contentEditable overlay for `type: "text"` (buttons keep the plain single-style editor). A selection-driven `FormattingToolbar` (portalled to `document.body`) toggles bold/italic/underline/color/list.
+
+**`props.text`:** a derived plain-string mirror (`richTextToPlainString(content)`), regenerated on every commit — not an independently authored source of truth for a `text` element, except where a binding targets it (see Binding above).
+
+**Migration:** schemaVersion 4 gives every `text` element `props.content`, built from the legacy `props.runs` (one paragraph per line-granular run) if present, else from `props.text` (one paragraph per newline). `props.runs` is dropped once migrated.
+
+**PPTX import:** builds `props.content` directly (one paragraph per parsed line, `list` metadata from the slide's bullet/number markup) — no intermediate `props.runs`.
+
+See ADR 0014.
 
 ### Interaction
 A trigger (tap, hover, press, enterScene, dataChanged) paired with a sequence of actions. Actions can:
@@ -102,22 +117,7 @@ Smooth property tweens triggered by interactions. Used for touch feedback, state
 
 **animate action:** `animate(target, property, from?, to, duration, easing?, delay?)`. From parameter optional (defaults to current rendered value). Capture buttons in editor snapshot current canvas values.
 
-**Implementation lessons (2026-07):**
-
-**Issue 1: No visual tweening (instant snap to final position)**
-- **Root cause:** `AnimationRuntime.tick()` updated tween values each RAF frame but only called `updateOverrides()` (which triggers React re-render) when animation **completed**. React never saw interpolated values.
-- **Solution:** Call `updateOverrides()` on **every tick**, not just on completion. This invalidates ElementResolver cache and triggers React re-render with current animation values.
-- **File:** `packages/engine/src/runtime/AnimationRuntime.ts:tick()` — moved `this.updateOverrides()` call before completion callback loop.
-
-**Issue 2: Elements revert to original position after animation completes**
-- **Root cause:** Animations apply as ephemeral layer (ADR 0010). When tween completes, animation override clears. No mechanism persisted final value to lower layer → element reverted to schema base.
-- **Solution:** On animation completion, write final value to **interaction override store** (layer 4 in rendering pipeline) via `overrideHost.setOverride()`. Animation override (layer 5) clears, but interaction override persists until scene change.
-- **Files:** 
-  - `AnimationRuntime.ts:onComplete()` — calls `persistToOverrides()` callback with final value before clearing animation override
-  - `Player.tsx:useEffect()` — wires `setPersistToOverrides()` callback that writes to `overrideHost` (position→x/y, scale→width/height, opacity, rotation)
-  - `ElementResolver.ts:applyOverrides()` — fixed to write geometry properties (`x`, `y`, `width`, `height`, `opacity`, `rotation`, `zIndex`) to element root (`element[key]`), not `element.props[key]`. Non-geometry properties still write to props.
-
-**Key insight:** Interaction override system (`overrideHost.setOverride()`) handles both geometry and props, but needs to distinguish them. Geometry properties write to element root (like bindings do), non-geometry properties write to `element.props`.
+**Implementation notes:** `AnimationRuntime.tick()` must call `updateOverrides()` on every RAF frame, not just on completion, or React never sees interpolated values. On completion, the final value is written to the interaction override store (`overrideHost.setOverride()`, layer 4) before the animation override (layer 5) clears — otherwise the element reverts to schema base once the tween ends.
 
 _Avoid:_ Tween, Transition (when referring to property animations — Transition is scene-level navigation effect)
 
@@ -270,16 +270,6 @@ eventBus.subscribe("dataChanged", (event) => {
 
 **Process boundary:** Main-side connectors (REST poll, MQTT, serial) emit via IPC bridge. Renderer EventBus receives, dispatches to subscribers. Output sinks (CSV, REST POST) in renderer, use IPC for fs writes.
 
-### BindingContext Migration
-
-**Before:** Main → IPC `data:value` → liveSession → `bindingHost.setValue()` → bump version → React re-render
-
-**After:** Main → IPC `event:emit` → EventBus → BindingContext subscriber → internal setValue → bump → re-render
-
-**Removed from public API:** `BindingHost.setValue()` (now private, only EventBus calls it). Tests emit through EventBus instead.
-
-**Kept:** `BindingHost.reset()` (Player unmount), `clearCache()` (project structure changes in editor).
-
 ### Analytics Architecture
 
 **Per-sink buffers:** Map<sinkId, KioskEvent[]>. Each sink has own buffer, flush independently.
@@ -307,62 +297,4 @@ eventBus.subscribe("dataChanged", (event) => {
 
 ## Video Element: Native `<video>` Implementation (2026-06)
 
-### Problem (Video.js Era):
-- Source corruption on repeated src changes (playback failed after multiple updates)
-- Dimension/position bugs (Video.js overrode wrapper styles, required complex workarounds)
-- ~240KB dependency overhead for features not used (controls UI, adaptive streaming, plugins)
-
-### Solution (Native `<video>` Refactor):
-Replaced Video.js with native HTML5 `<video>` element. Wrapper div pattern (matches image/audio):
-
-```jsx
-<div style={baseStyle}>  // positioning + dims
-  {hasSource && (
-    <video src={src} style={{width: "100%", height: "100%"}} />
-  )}
-</div>
-```
-
-**Key implementation details:**
-
-1. **Autoplay race condition fix** - Original effect fired play() before video loaded:
-   ```typescript
-   useEffect(() => {
-     if (video.readyState >= 3) {
-       video.play();  // Already loaded
-     } else {
-       video.addEventListener("canplaythrough", tryPlay, { once: true });
-     }
-   }, [playing, hasSource, src]);
-   ```
-
-2. **Protocol handler MIME types** - Electron's `kioskasset://` protocol returned wrong Content-Type, causing SRC_NOT_SUPPORTED (error code 4). Fixed by explicit MIME headers:
-   ```typescript
-   protocol.handle(ASSET_SCHEME, async (request) => {
-     const ext = extname(absPath).toLowerCase();
-     const mimeMap = { ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ... };
-     return new Response(body, {
-       headers: { "Content-Type": mimeMap[ext], "Accept-Ranges": "bytes" }
-     });
-   });
-   ```
-
-3. **Conditional render guard** - Don't mount `<video>` when `src=""` (empty source triggers error):
-   ```jsx
-   {hasSource && <video src={src} />}
-   ```
-
-### Files Modified:
-- `packages/engine/src/render/ElementRenderer.tsx` - VideoElement refactor (~150 lines simpler)
-- `packages/engine/src/render/Player.tsx` - Native HTMLVideoElement API (play/pause/seek/volume/speed)
-- `apps/desktop/src/main/index.ts` - Protocol handler MIME + error handling
-- `packages/engine/src/model/factory.ts` - Removed dead props (controls/responsive/fluid)
-- `apps/desktop/src/renderer/editor/PropertiesPanel.tsx` - Removed controls checkbox
-- `docs/adr/0002-native-video-element.md` - Decision record
-
-### Result:
-- ✅ No corruption on rapid src changes
-- ✅ Dimensions/positioning work correctly (wrapper pattern)
-- ✅ ~240KB smaller bundle
-- ✅ Consistent element architecture (wrapper + fill, like image/audio)
-- ✅ Same programmatic API surface (play/pause/seek via interactions)
+Video elements render via native HTML5 `<video>` (wrapper div pattern, matching image/audio), not Video.js — replaced for source-corruption and dimension bugs, and to drop an unused dependency. See `docs/adr/0002-native-video-element.md` for the full decision record, implementation details, and files touched.

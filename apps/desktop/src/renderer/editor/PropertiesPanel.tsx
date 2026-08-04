@@ -223,15 +223,14 @@ function TypeFields({
 
   switch (el.type) {
     case "text":
+      // Free-text editing, per-character bold/italic/underline/color, lists,
+      // and per-paragraph alignment all now live in the in-canvas rich-text
+      // editor + its selection-driven formatting toolbar (double-click to
+      // edit). What's left here is the element's default/base style — the
+      // fallback a span/paragraph uses when it carries no formatting of its
+      // own — plus the data binding.
       return (
         <>
-          <Row label="Text">
-            <textarea
-              value={str(p.text)}
-              onChange={(e) => set("text", e.target.value)}
-              style={{ ...input, height: 60, resize: "vertical" }}
-            />
-          </Row>
           <BindControl elementId={el.id} targetProp="text" />
           <Row label="Size"><Num value={n(p.fontSize, 32)} onChange={(v) => debouncedSet("fontSize", Number(v))} /></Row>
           <Row label="Font">
@@ -247,58 +246,7 @@ function TypeFields({
               ))}
             </select>
           </Row>
-          <Row label="Style">
-            <div style={{ display: "flex", gap: 4 }}>
-              {([
-                { key: "bold", label: "B", active: str(p.fontWeight, "normal") === "bold", weight: 700 as const },
-                { key: "italic", label: "I", active: str(p.fontStyle, "normal") === "italic", weight: 400 as const },
-                { key: "underline", label: "U", active: str(p.textDecoration, "none") === "underline", weight: 400 as const },
-              ] as const).map((btn) => (
-                <button
-                  key={btn.key}
-                  onClick={() => {
-                    if (btn.key === "bold") set("fontWeight", btn.active ? "normal" : "bold");
-                    else if (btn.key === "italic") set("fontStyle", btn.active ? "normal" : "italic");
-                    else set("textDecoration", btn.active ? "none" : "underline");
-                  }}
-                  style={{
-                    ...input,
-                    flex: 1,
-                    cursor: "pointer",
-                    fontWeight: btn.weight,
-                    fontStyle: btn.key === "italic" ? "italic" : "normal",
-                    textDecoration: btn.key === "underline" ? "underline" : "none",
-                    background: btn.active ? "#2563eb" : "#161c26",
-                    color: btn.active ? "#fff" : "#e2e8f0",
-                    border: btn.active ? "1px solid #1d4ed8" : "1px solid #232c3a",
-                  }}
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
-          </Row>
           <Row label="Color"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
-          <Row label="Align">
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["left", "center", "right"] as const).map((alignment) => (
-                <button
-                  key={alignment}
-                  onClick={() => set("align", alignment)}
-                  style={{
-                    ...input,
-                    flex: 1,
-                    cursor: "pointer",
-                    background: str(p.align, "left") === alignment ? "#2563eb" : "#161c26",
-                    color: str(p.align, "left") === alignment ? "#fff" : "#e2e8f0",
-                    border: str(p.align, "left") === alignment ? "1px solid #1d4ed8" : "1px solid #232c3a",
-                  }}
-                >
-                  {alignment.charAt(0).toUpperCase() + alignment.slice(1)}
-                </button>
-              ))}
-            </div>
-          </Row>
         </>
       );
     case "rectangle":
@@ -845,7 +793,7 @@ function MultiLayerProperties({ elements }: { elements: Element[] }) {
     <div style={panel}>
       <div style={heading}>Multi-Layer Properties ({elements.length})</div>
 
-      <div style={{ color: "#2563eb", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Layer Lock
       </div>
       <CheckRow label="Locked">
@@ -1021,7 +969,7 @@ function CollectionFields({
         </span>
       </Row>
 
-      <div style={{ color: "#2563eb", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Video Settings
       </div>
       {layout === "grid" && (
@@ -1060,7 +1008,7 @@ function CollectionFields({
         <Row label="Delay (ms)"><Num value={n(p.advanceDelayMs, 0)} onChange={(v) => set("advanceDelayMs", Number(v))} /></Row>
       )}
 
-      <div style={{ color: "#2563eb", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Items ({list.length})
       </div>
       <button style={chooseBtn} onClick={addItem}>＋ Add item</button>

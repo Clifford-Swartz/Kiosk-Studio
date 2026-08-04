@@ -11,6 +11,7 @@ import { AnimationRuntime } from "../runtime/AnimationRuntime.js";
 import { StateRuntime } from "../runtime/StateRuntime.js";
 import { decomposeValue } from "../runtime/PropertyRegistry.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
+import { walkElementTree } from "../data/elementTree.js";
 
 export interface PlayerProps {
   project: Project;
@@ -24,6 +25,19 @@ export interface PlayerProps {
   hideAudioIcons?: boolean;
   /** True when rendering in editor mode; disables button interaction overlays. */
   editorMode?: boolean;
+  /**
+   * Nearest ancestor "layer" id of the currently-selected element in the
+   * editor (null for the root/base layer). Scopes editor-only dimming of
+   * invisible elements to whichever layer the selection is in — see
+   * ElementRenderer's `editorDim`. Ignored outside editorMode.
+   */
+  activeLayerId?: string | null;
+  /**
+   * Ids of "layer" elements that should dim rather than fully hide while
+   * invisible — see ElementRenderer's `dimmableLayerIds`. Ignored outside
+   * editorMode.
+   */
+  dimmableLayerIds?: Set<string> | null;
   /** Fired when a video element reports a DECODE/SRC_NOT_SUPPORTED playback error. */
   onIncompatible?: (elementId: string, src: string) => void;
 }
@@ -39,7 +53,7 @@ interface SceneLayer {
   key: string;
 }
 
-export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false, onIncompatible }: PlayerProps) {
+export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false, activeLayerId = null, dimmableLayerIds = null, onIncompatible }: PlayerProps) {
   // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
@@ -334,7 +348,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       goToSceneInternal(previousSceneId, false);
     },
       setProp: (elementId, key, value) => overrideHost.setOverride(elementId, key, value),
-      toggleVisibility: (elementId) => overrideHost.toggleOverride(elementId, "__hidden"),
+      toggleVisibility: (elementId) => overrideHost.toggleOverride(elementId, "visible"),
       playAudio: (elementId) => {
         const audio = audioElementsRef.current.get(elementId);
         if (audio) {
@@ -410,27 +424,31 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         console.log(`[DEBUG-anim] PlayerContext.animate() wrapper completed`);
         return result;
       },
-      setState: async (stateName, animated, _duration) => {
-        if (animated) {
-          // Fade out, swap state, fade in
-          const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
-          if (!activeScene) return;
-
-          // TODO: Implement fade transition (opacity tween on all elements)
-          // For v1, just instant swap
-          console.warn("[Player] setState animated transitions not yet implemented, falling back to instant");
-        }
-        // Pass scene ID to validate state applies to correct scene
+      setState: async (stateName, animated, duration) => {
         const sceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
+        const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
+        const fadeMs = (duration ?? 300) / 2;
+        const fadeElements: Element[] = [];
+        if (animated && activeScene) {
+          walkElementTree(activeScene.elements, (el) => fadeElements.push(el));
+          // Fade every element out first. transient=true so these tweens don't
+          // persist a permanent opacity override once they complete.
+          await Promise.all(
+            fadeElements.map((el) =>
+              animationRuntime.animate(el.id, "opacity", undefined, 0, fadeMs, "linear", 0, true)
+            )
+          );
+        }
+
         if (stateRuntime.setState(stateName, sceneId)) {
           // Emit stateExit for the state being left, before switching (so the
           // auto-injected sceneState reflects the previous state). Mirrors
           // sceneExit's duration tracking in goToScene.
           if (stateEnterTimeRef.current > 0) {
-            const duration = Date.now() - stateEnterTimeRef.current;
+            const stateDuration = Date.now() - stateEnterTimeRef.current;
             eventBus.emit({
               kind: "stateExit",
-              payload: { sceneId, toState: stateName, duration }
+              payload: { sceneId, toState: stateName, duration: stateDuration }
             });
           }
           eventBus.setActiveState(stateName);
@@ -438,6 +456,17 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         }
         // Wait for React to apply changes before continuing
         await new Promise(resolve => requestAnimationFrame(resolve));
+
+        if (animated && activeScene) {
+          // Fade back in to each element's actual resolved opacity under the
+          // new state (not assumed to be 1 — the new state may itself set opacity).
+          await Promise.all(
+            fadeElements.map((el) => {
+              const target = resolveElement(el).opacity;
+              return animationRuntime.animate(el.id, "opacity", 0, target, fadeMs, "linear", 0, true);
+            })
+          );
+        }
       },
       project,
     };
@@ -590,9 +619,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   );
 
   // Clear binding cache when project changes (BEFORE render uses it).
-  // useLayoutEffect runs synchronously after DOM mutations but before browser paint.
-  // This ensures cache clears before elements render with bindings.
-  useLayoutEffect(() => {
+  // Must happen during render, not in an effect (effects run after render,
+  // so this render would still read stale cached values — see CLAUDE.md).
+  useMemo(() => {
     bindingHost.clearCache();
   }, [project]);
 
@@ -802,6 +831,8 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
                 onVideoRef={onVideoRef}
                 onIncompatible={onIncompatible}
                 editorMode={editorMode}
+                activeLayerId={activeLayerId}
+                dimmableLayerIds={dimmableLayerIds}
                 resolveElement={live ? resolveElement : undefined}
               />
             );

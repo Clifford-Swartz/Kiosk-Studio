@@ -6,9 +6,11 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import type { Action, ActionType, ElementShape, Interaction, Project, Scene } from "@kiosk/engine";
+import type { Action, ActionType, ElementShape, Interaction, Project, RichTextDoc, Scene } from "@kiosk/engine";
+import { plainTextToRichTextDoc } from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { getEditableProps } from "./elementProps.js";
+import { RichTextValueEditor } from "./richText/RichTextValueEditor.js";
 
 /**
  * Recursively find an element by ID, including children of layers/collections.
@@ -42,7 +44,7 @@ function flattenAllElements(elements: any[]): any[] {
  * Triggers & Actions editor for the selected element. Lists the element's
  * interactions (trigger → actions); add a tap trigger, then add/configure
  * actions (Go to scene / Set property / Toggle visibility) with param forms.
- * Actions collapse to a one-line icon+summary by default; drag a row's handle
+ * Actions collapse to a one-line icon+summary by default; click and hold a row
  * to reorder, or drop it on another row's middle zone to group them to run
  * concurrently ("parallel"). Writes through the store; the Player runs these live.
  */
@@ -339,8 +341,8 @@ function AddActionMenu({
 
 /**
  * Row header shared by plain action rows and "Run together" group rows:
- * drag handle + icon + one-line summary + move/remove controls. Clicking
- * anywhere else on the row toggles the expanded field editor.
+ * icon + one-line summary + move/remove controls. Clicking anywhere else on
+ * the row toggles the expanded field editor.
  */
 function RowHeader({
   icon,
@@ -351,7 +353,6 @@ function RowHeader({
   onMoveDown,
   onRemove,
   removeTitle,
-  showDragHandle = true,
   extra,
 }: {
   icon: string;
@@ -362,13 +363,11 @@ function RowHeader({
   onMoveDown?: () => void;
   onRemove: () => void;
   removeTitle?: string;
-  showDragHandle?: boolean;
   extra?: ReactNode;
 }) {
   return (
     <div style={rowHeaderStyle} onClick={onToggleExpand}>
-      {showDragHandle && <span style={dragHandle} title="Drag to reorder or group">⠿</span>}
-      <span style={{ fontSize: 12, flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: 12, flexShrink: 0, color: "#fbbf24" }}>{icon}</span>
       <span style={summaryText} title={label}>{expanded ? "▾ " : "▸ "}{label}</span>
       {extra}
       <button
@@ -492,12 +491,20 @@ function ActionsSection({
   const [overId, setOverId] = useState<string | null>(null);
   const [groupTargetId, setGroupTargetId] = useState<string | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDraggableRef = useRef(false);
+  // holdReadyId is state (not a ref) so flipping it after the hold delay
+  // actually re-renders the row with draggable=true — a ref alone never
+  // triggers React to update the DOM attribute, silently preventing native
+  // drag from starting. didDragRef tracks whether a drag genuinely began
+  // (set only in onDragStart) so a deliberate slow click that never moves
+  // isn't mistaken for a drag and swallowed.
+  const [holdReadyId, setHoldReadyId] = useState<string | null>(null);
+  const didDragRef = useRef(false);
 
   function resetDrag() {
     setDragId(null);
     setOverId(null);
     setGroupTargetId(null);
+    setHoldReadyId(null);
   }
 
   function handleDrop() {
@@ -525,8 +532,8 @@ function ActionsSection({
 
   function guardedToggle(id: string) {
     // A completed drag shouldn't also toggle expand/collapse.
-    if (isDraggableRef.current) {
-      isDraggableRef.current = false;
+    if (didDragRef.current) {
+      didDragRef.current = false;
       return;
     }
     toggleExpanded(id);
@@ -554,13 +561,13 @@ function ActionsSection({
           isDragging,
           isReorderTarget,
           isGroupTarget,
-          draggable: isDraggableRef.current,
-          onDragStart: () => setDragId(action.id),
+          draggable: holdReadyId === action.id,
+          onDragStart: () => {
+            didDragRef.current = true;
+            setDragId(action.id);
+          },
           onDragEnd: () => {
-            setDragId(null);
-            setOverId(null);
-            setGroupTargetId(null);
-            isDraggableRef.current = false;
+            resetDrag();
           },
           onDragOver: (e: DragEvent<HTMLDivElement>) => {
             e.preventDefault();
@@ -593,15 +600,20 @@ function ActionsSection({
               if (t.tagName === "BUTTON" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return;
               t = t.parentElement as HTMLElement;
             }
+            didDragRef.current = false;
             holdTimerRef.current = setTimeout(() => {
-              isDraggableRef.current = true;
+              setHoldReadyId(action.id);
             }, 200);
           },
           onMouseUp: () => {
+            // Clear the hold timer if released early, and drop drag-readiness
+            // if no drag actually started (a deliberate slow click shouldn't
+            // get swallowed as a drag).
             if (holdTimerRef.current) {
               clearTimeout(holdTimerRef.current);
               holdTimerRef.current = null;
             }
+            if (!didDragRef.current) setHoldReadyId(null);
           },
         };
 
@@ -723,7 +735,6 @@ function NestedActionRow({
         onMoveUp={onMoveUp}
         onMoveDown={onMoveDown}
         onRemove={onRemove}
-        showDragHandle={false}
       />
       {expanded && <ActionFields action={action} scenes={scenes} targets={targets} onChange={onChange} />}
     </div>
@@ -739,9 +750,9 @@ function SmartValueInput({
   value,
   onChange,
 }: {
-  valueType: "color" | "number" | "text";
-  value: string;
-  onChange: (v: string) => void;
+  valueType: "color" | "number" | "text" | "richtext";
+  value: unknown;
+  onChange: (v: unknown) => void;
 }) {
   switch (valueType) {
     case "color":
@@ -749,13 +760,13 @@ function SmartValueInput({
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 4 }}>
           <input
             type="color"
-            value={value || "#ffffff"}
+            value={str(value) || "#ffffff"}
             onChange={(e) => onChange(e.target.value)}
             style={{ width: 32, height: 28, padding: 0, border: "none", background: "none" }}
           />
           <input
             type="text"
-            value={value}
+            value={str(value)}
             onChange={(e) => onChange(e.target.value)}
             placeholder="#ffffff"
             style={{ ...input, flex: 1 }}
@@ -768,7 +779,7 @@ function SmartValueInput({
         <input
           type="number"
           step="any"
-          value={value}
+          value={str(value)}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0"
           style={{ ...input, marginTop: 4 }}
@@ -778,12 +789,20 @@ function SmartValueInput({
     case "text":
       return (
         <textarea
-          value={value}
+          value={str(value)}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Enter text"
           style={{ ...input, marginTop: 4, minHeight: 60, resize: "vertical" }}
         />
       );
+
+    case "richtext": {
+      const doc =
+        value && typeof value === "object" && (value as RichTextDoc).version === 1
+          ? (value as RichTextDoc)
+          : plainTextToRichTextDoc(typeof value === "string" ? value : "");
+      return <RichTextValueEditor value={doc} onChange={onChange} />;
+    }
   }
 }
 
@@ -871,11 +890,23 @@ function ActionFields({
               </select>
             )}
 
+            {/* Boolean properties (e.g. visible) get a checkbox, not a text/color/number input */}
+            {selectedProp && selectedProp.valueType === "boolean" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={p.value === true}
+                  onChange={(e) => setParam("value", e.target.checked)}
+                />
+                <span style={{ fontSize: 12, color: "#e2e8f0" }}>{selectedProp.label}</span>
+              </div>
+            )}
+
             {/* Smart Value Input (switches based on property type) */}
-            {selectedProp && (
+            {selectedProp && selectedProp.valueType !== "boolean" && (
               <SmartValueInput
                 valueType={selectedProp.valueType}
-                value={str(p.value)}
+                value={selectedProp.valueType === "richtext" ? p.value : str(p.value)}
                 onChange={(v) => setParam("value", v)}
               />
             )}
@@ -1207,6 +1238,9 @@ const actionRow: CSSProperties = {
   borderRadius: 6,
   padding: 6,
   marginBottom: 4,
+  // Text selection fights with click-and-hold drag detection.
+  userSelect: "none",
+  WebkitUserSelect: "none",
 };
 const groupRow: CSSProperties = {
   ...actionRow,
@@ -1216,7 +1250,7 @@ const groupRow: CSSProperties = {
 const nestedActionRow: CSSProperties = {
   ...actionRow,
   marginLeft: 4,
-  background: "#0c1017",
+  background: "#232c3a",
 };
 const triggerChip: CSSProperties = {
   background: "#1e3a52",
@@ -1279,14 +1313,6 @@ const captureBtn: CSSProperties = {
   color: "#93c5fd",
   fontSize: 11,
   cursor: "pointer",
-};
-const dragHandle: CSSProperties = {
-  cursor: "grab",
-  color: "#475569",
-  fontSize: 12,
-  width: 12,
-  textAlign: "center",
-  flexShrink: 0,
 };
 const rowHeaderStyle: CSSProperties = {
   display: "flex",

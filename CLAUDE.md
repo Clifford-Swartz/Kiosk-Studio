@@ -20,27 +20,9 @@ Single-context layout: one `CONTEXT.md` + `docs/adr/` at the repo root for all p
 
 ### Runtime contexts
 
-**Current state (2026-07):** `ElementResolver` (`packages/engine/src/data/ElementResolver.ts`) is the single consolidated interface for the rendering pipeline — owns binding values and interaction overrides directly, and wires in `StateRuntime`/`AnimationRuntime` as external providers (`setStateProvider`/`setAnimationProvider`). `useResolveElement()` resolves all five pipeline layers (schema → bindings → state → overrides → animations) behind one call.
-
-The second and third runtime contexts anticipated below (state, animation) did emerge, but weren't extracted into a `context/` folder — they were absorbed as providers into `ElementResolver` instead (ADR 0010, ADR 0011). The older `BindingContext` + `overrideStore`/`applyOverrides`/`useOverrides` split was deleted 2026-07 (dead code, fully superseded by `ElementResolver`).
+`ElementResolver` (`packages/engine/src/data/ElementResolver.ts`) is the single consolidated interface for the rendering pipeline. See CONTEXT.md's "Binding" and "Rendering Pipeline" entries for current architecture and cache-invalidation rules.
 
 **Speculative refactor trigger:** If `MediaContext` or `AssetContext`-shaped concerns emerge (playback coordination/playlists, or CDN switching/preloading/caching), reassess whether they fit the same provider pattern as `StateRuntime`/`AnimationRuntime`, or warrant extraction into their own module.
-
-### ElementResolver implementation lessons (2026-06, orig. BindingContext)
-
-**Issue:** Initial consolidation broke video elements—src updates didn't apply, elements rendered wrong size.
-
-**Root causes:**
-1. **React hook violation:** `useElement(element)` called `useSyncExternalStore` internally but was invoked inside `.map()` loop, violating Rules of Hooks ("Rendered more hooks than during the previous render").
-2. **Unstable resolver:** Resolver function recreated every render → React saw elements as "changed" → video lifecycle broke.
-3. **Stale cache:** Cache keyed by `element.id`. When editor mutated element (add video src), ID stayed same but props changed. Cache returned old element with no src.
-
-**Solutions:**
-1. **Split interface:** `BindingContext.useBindings()` returns resolver function. Hook called at component top-level (safe), resolver called in loop (safe).
-2. **Stable resolver:** `this.resolveElement` bound to instance → same reference every call → React sees stable identity.
-3. **Cache invalidation:** `bindingHost.clearCache()` called in `useMemo(() => clearCache(), [project])` in Player → clears BEFORE render uses cache, not after (useEffect too late).
-
-**Key insight:** Cache for binding resolution must clear on **project structure changes** (editor mutations), not just on **data value changes** (setValue). Two separate invalidation triggers.
 
 ## UX/UI design principles (2026-06)
 
@@ -54,7 +36,7 @@ The second and third runtime contexts anticipated below (state, animation) did e
 
 **Discoverable hierarchy.** Scene structure shows z-index numbers + color thumbnails. Rectangle with red fill → red rect thumbnail. Text with blue color → blue "T". Scan layer stack at a glance, no need to click each element to see properties.
 
-**Consolidated actions.** Dropdowns over sprawling button rows. TopBar: File dropdown (Open/Save/Import) + Scene dropdown (Add/Rename/Delete) + 4 icon buttons (Kiosk/Play/Undo/Redo). Before: 15+ buttons spread across bar. After: 2 dropdowns + 4 icons. Keep frequent actions visible, tuck infrequent ones into menus.
+**Consolidated actions.** Dropdowns over sprawling button rows. TopBar: File dropdown (Open/Save/Import) + Scene dropdown (Add/Rename/Delete) + icon buttons (Kiosk/Play/Undo/Redo/AI). Before: 15+ buttons spread across bar. After: 2 dropdowns + icons. Keep frequent actions visible, tuck infrequent ones into menus.
 
 **Compact density.** Palette: 3-column icon grid vs vertical list. ~180px tall vs ~320px. Icons only, labels on hover. Same functionality, half the height.
 

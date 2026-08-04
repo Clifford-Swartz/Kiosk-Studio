@@ -1,4 +1,4 @@
-import { flattenActions, type Project, type Element } from "@kiosk/engine";
+import { flattenActions, walkElementTree, type Project } from "@kiosk/engine";
 
 export interface SceneNode {
   sceneId: string;
@@ -23,29 +23,19 @@ export function buildSceneHierarchy(
   const goToSceneParents = new Map<string, Set<string>>();
 
   for (const scene of project.scenes) {
-    for (const element of scene.elements) {
-      traverseElement(element, scene.id);
-    }
-  }
-
-  function traverseElement(el: Element, sceneId: string) {
-    for (const interaction of el.interactions) {
-      for (const action of flattenActions(interaction.actions)) {
-        if (action.type === "goToScene" && typeof action.params.sceneId === "string") {
-          const targetId = action.params.sceneId;
-          if (!goToSceneParents.has(targetId)) {
-            goToSceneParents.set(targetId, new Set());
+    walkElementTree(scene.elements, (el) => {
+      for (const interaction of el.interactions) {
+        for (const action of flattenActions(interaction.actions)) {
+          if (action.type === "goToScene" && typeof action.params.sceneId === "string") {
+            const targetId = action.params.sceneId;
+            if (!goToSceneParents.has(targetId)) {
+              goToSceneParents.set(targetId, new Set());
+            }
+            goToSceneParents.get(targetId)!.add(scene.id);
           }
-          goToSceneParents.get(targetId)!.add(sceneId);
         }
       }
-    }
-    // Traverse children (groups)
-    if (el.children) {
-      for (const child of el.children) {
-        traverseElement(child, sceneId);
-      }
-    }
+    });
   }
 
   // 2. Classify scenes by parent count

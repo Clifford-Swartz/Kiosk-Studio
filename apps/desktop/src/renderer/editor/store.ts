@@ -6,6 +6,11 @@ import {
   mapActions,
   filterActions,
   removeActionById,
+  canHaveChildren,
+  findElement,
+  findParent,
+  isDescendant,
+  patchElement as patchElementTree,
   type Action,
   type Binding,
   type DataConnectorDef,
@@ -201,23 +206,8 @@ function withActiveScene(
 }
 
 /** Map over a scene's elements, patching the one matching `id`. Recursively searches nested children. */
-function patchElement(
-  scene: Scene,
-  id: string,
-  transform: (el: Element) => Element
-): Scene {
-  const patchRecursive = (elements: Element[]): Element[] => {
-    return elements.map((el) => {
-      if (el.id === id) {
-        return transform(el);
-      }
-      if (el.children) {
-        return { ...el, children: patchRecursive(el.children) };
-      }
-      return el;
-    });
-  };
-  return { ...scene, elements: patchRecursive(scene.elements) };
+function patchElement(scene: Scene, id: string, transform: (el: Element) => Element): Scene {
+  return { ...scene, elements: patchElementTree(scene.elements, id, transform) };
 }
 
 /**
@@ -236,20 +226,8 @@ function reorderWithinSiblings(elements: Element[], id: string, toIndex: number)
     return els.map((e, i) => ({ ...e, zIndex: i + 1 }));
   }
   return elements.map((el) =>
-    el.children ? { ...el, children: reorderWithinSiblings(el.children, id, toIndex) } : el
+    canHaveChildren(el) ? { ...el, children: reorderWithinSiblings(el.children!, id, toIndex) } : el
   );
-}
-
-/** Find an element by ID, searching recursively through nested children. */
-function findElement(elements: Element[], id: string): Element | null {
-  for (const el of elements) {
-    if (el.id === id) return el;
-    if (el.children) {
-      const found = findElement(el.children, id);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 /** Deep clone an element with new IDs for itself and all nested children. */
@@ -261,25 +239,9 @@ function deepCloneElement(element: Element): Element {
   };
 }
 
-/** Find the parent element of a given element ID. Returns null if element is at root level. */
-function findParent(elements: Element[], targetId: string): Element | null {
-  for (const el of elements) {
-    if (el.children) {
-      // Check if target is a direct child
-      if (el.children.some(child => child.id === targetId)) {
-        return el;
-      }
-      // Recursively search in children
-      const parent = findParent(el.children, targetId);
-      if (parent) return parent;
-    }
-  }
-  return null;
-}
-
 export const useEditor = create<EditorState>((set, get) => ({
   // Placeholder until loadProject runs; replaced on first render.
-  project: { schemaVersion: 3, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataConnectors: [], enableBackButton: false, enableHomeButton: false },
+  project: { schemaVersion: 4, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataConnectors: [], enableBackButton: false, enableHomeButton: false },
   activeSceneId: "",
   selectedId: null,
   selectedIds: new Set(),
@@ -473,7 +435,12 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   updateElementProps: (id, props) =>
     set((state) => {
-      if (state.isModalEditingActive()) return state;
+      // Unlike updateElement/moveElement/etc., this is NOT guarded by
+      // isModalEditingActive(): Properties Panel writes (fontSize, color,
+      // fill...) need to apply live while a text element is being edited in
+      // the canvas. Safe because RichTextEditor's own content/text commit
+      // always fires after exitTextEditing() has already cleared editingId,
+      // so there's no key it writes that a live panel edit could race with.
       return {
         project: withActiveScene(state, (scene) =>
           patchElement(scene, id, (el) => ({ ...el, props: { ...el.props, ...props } }))
@@ -616,18 +583,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (elementId === newParentId) return "Cannot reparent element to itself";
 
     // Validation 4: Can't reparent to own descendant
-    const isDescendant = (elements: Element[], ancestorId: string, descendantId: string): boolean => {
-      for (const el of elements) {
-        if (el.id === ancestorId) {
-          if (el.children) {
-            if (el.children.some(c => c.id === descendantId)) return true;
-            if (isDescendant(el.children, ancestorId, descendantId)) return true;
-          }
-        }
-        if (el.children && isDescendant(el.children, ancestorId, descendantId)) return true;
-      }
-      return false;
-    };
     if (newParentId && isDescendant(scene.elements, elementId, newParentId)) {
       return "Cannot reparent element to its own descendant";
     }

@@ -883,65 +883,44 @@ app.whenReady().then(async () => {
   protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
     // kioskasset://load/<encoded-project-dir>/<relative-path>
-    const fullPath = url.pathname.replace(/^\/+/, "");
-    const decoded = decodeURIComponent(fullPath);
+    // The project dir is a single URL segment, individually percent-encoded by
+    // the renderer (assets.ts: encodeURIComponent(base)) — its own path
+    // separators are escaped to %2F. The relative path is everything after
+    // that segment, with each of ITS segments individually encoded by
+    // resolveSrc(). Splitting on the first raw "/" before decoding anything
+    // recovers the exact boundary the renderer intended, so project dirs work
+    // regardless of what the folder happens to be named (earlier versions of
+    // this handler instead guessed the boundary from a ".kproj" suffix in the
+    // fully-decoded string, which broke for "Save As" locations and for
+    // exported/renamed folders that don't end in ".kproj").
+    const rawPath = url.pathname.replace(/^\/+/, "");
+    const slashIndex = rawPath.indexOf("/");
+    const projectDir = decodeURIComponent(slashIndex === -1 ? rawPath : rawPath.slice(0, slashIndex));
+    const relativePath = slashIndex === -1 ? "" : decodeURIComponent(rawPath.slice(slashIndex + 1));
 
     console.log(`[${ASSET_SCHEME}] Request: ${request.url}`);
-    console.log(`[${ASSET_SCHEME}] Decoded: ${decoded}`);
-
-    // Parse project directory and relative path
-    // Look for .kproj/ boundary
-    const kprojMatch = decoded.match(/^(.+\.kproj)[/\\](.+)$/);
+    console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
+    console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
 
     let absPath: string;
 
-    if (!kprojMatch) {
-      // Fallback: no .kproj boundary found
-      // Check if path contains user-content/ or assets/ segment
-      const userContentIndex = decoded.indexOf("user-content/");
-      const assetsIndex = decoded.indexOf("assets/");
-
-      if (userContentIndex >= 0) {
-        // Extract relative path from user-content/ onwards
-        const relativePath = decoded.slice(userContentIndex);
-        absPath = normalize(join(getAppRoot(), relativePath));
-        console.log(`[${ASSET_SCHEME}] Fallback user-content: ${relativePath} → ${absPath}`);
-      } else if (assetsIndex >= 0) {
-        // Extract relative path from assets/ onwards
-        const relativePath = decoded.slice(assetsIndex);
-        absPath = normalize(join(getAppRoot(), relativePath));
-        console.log(`[${ASSET_SCHEME}] Fallback assets: ${relativePath} → ${absPath}`);
-      } else {
-        // No known prefix → treat as absolute path
-        absPath = normalize(decoded);
-      }
-    } else {
-      const projectDir = kprojMatch[1];
-      const relativePath = kprojMatch[2];
-
-      console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
-      console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
-
+    if (relativePath.startsWith("user-content/")) {
       const exported = await isProjectExported(projectDir);
       console.log(`[${ASSET_SCHEME}] Exported: ${exported}`);
-
-      // Resolve based on exported flag and path prefix
-      if (relativePath.startsWith("user-content/")) {
-        if (exported) {
-          // Exported: user-content refs should have been rewritten to assets/
-          absPath = normalize(join(projectDir, "assets", basename(relativePath)));
-          console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
-        } else {
-          // Working: resolve user-content/ from app root
-          absPath = normalize(join(getAppRoot(), relativePath));
-        }
-      } else if (relativePath.startsWith("assets/")) {
-        // Both: assets/ resolves from project dir
-        absPath = normalize(join(projectDir, relativePath));
+      if (exported) {
+        // Exported: user-content refs should have been rewritten to assets/
+        absPath = normalize(join(projectDir, "assets", basename(relativePath)));
+        console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
       } else {
-        // No prefix: absolute path fallback
-        absPath = normalize(decoded);
+        // Working: resolve user-content/ from app root
+        absPath = normalize(join(getAppRoot(), relativePath));
       }
+    } else if (relativePath) {
+      // assets/ (and any other project-relative reference) resolves from the
+      // project dir the renderer actually passed as the base.
+      absPath = normalize(join(projectDir, relativePath));
+    } else {
+      absPath = normalize(projectDir);
     }
 
     console.log(`[${ASSET_SCHEME}] Resolved: ${absPath}`);

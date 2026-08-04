@@ -10,6 +10,12 @@ export {
   newId,
 } from "./model/factory.js";
 export { mapActions, filterActions, removeActionById, flattenActions } from "./model/actionTree.js";
+export {
+  richTextToPlainString,
+  plainTextToRichTextDoc,
+  legacyRunsToRichTextDoc,
+} from "./model/richText.js";
+export type { RichTextSpan, RichTextParagraph, RichTextDoc, LegacyTextRun } from "./model/richText.js";
 
 // Rendering: shared primitives used by Player and Editor.
 export { ElementRenderer, resolveSrc, isVideoSrc } from "./render/ElementRenderer.js";
@@ -32,3 +38,20 @@ export type { SinkStatus } from "./analytics/AnalyticsStore.js";
 // Element resolution: unified bindings + overrides pipeline.
 export { elementResolver, bindingHost, overrideHost } from "./data/ElementResolver.js";
 export type { ElementResolver, BindingHost, OverrideHost } from "./data/ElementResolver.js";
+
+// Element tree: single walk/find/flatten implementation for layer/collection nesting.
+export {
+  NESTABLE_TYPES,
+  canHaveChildren,
+  flattenElements,
+  findElement,
+  findElementAbsolute,
+  findParent,
+  findNearestLayerId,
+  isDescendant,
+  isLockedOrChildOfLocked,
+  walkElementTree,
+  collectElements,
+  patchElement,
+} from "./data/elementTree.js";
+export type { FlattenOptions } from "./data/elementTree.js";

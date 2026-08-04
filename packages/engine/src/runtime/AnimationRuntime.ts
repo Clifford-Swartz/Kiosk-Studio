@@ -77,7 +77,8 @@ export class AnimationRuntime {
     to: AnimatableValue,
     duration: number,
     easing: EasingCurve = "linear",
-    delay = 0
+    delay = 0,
+    transient = false
   ): Promise<void> {
     const key = `${elementId}:${property}`;
 
@@ -117,8 +118,11 @@ export class AnimationRuntime {
         onComplete: () => {
           console.log(`[DEBUG-anim] Tween complete:`, { key });
 
-          // Persist final value to interaction override store so it survives after animation clears
-          if (this.persistToOverrides) {
+          // Persist final value to interaction override store so it survives after animation clears.
+          // Transient tweens (e.g. a state-change fade) skip this — the state
+          // change itself is the source of truth, and persisting here would
+          // leave a permanent override the state transition can't clear.
+          if (!transient && this.persistToOverrides) {
             console.log(`[DEBUG-anim] Persisting final value to override store:`, { elementId, property, to });
             this.persistToOverrides(elementId, property, to);
           }

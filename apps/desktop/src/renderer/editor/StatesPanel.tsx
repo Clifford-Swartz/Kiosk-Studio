@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { useEditor } from "./store.js";
 import { importContentFile, importVideoAware } from "./assets.js";
 import { Row } from "./components/Row.js";
+import { RichTextValueEditor } from "./richText/RichTextValueEditor.js";
+import { plainTextToRichTextDoc, type RichTextDoc } from "@kiosk/engine";
 
 /**
  * Custom debounced callback hook - delays callback execution until user stops typing.
@@ -402,7 +404,7 @@ function ElementOverrides({
 
   // Property suggestions based on element type (ADR 0011: text/label, fill/color, src/imageSrc)
   const propSuggestions: string[] = [];
-  if (element.type === "text") propSuggestions.push("text", "color");
+  if (element.type === "text") propSuggestions.push("content", "text", "color");
   if (element.type === "button") propSuggestions.push("label", "fill", "color", "imageSrc");
   if (element.type === "rectangle") propSuggestions.push("fill");
   if (element.type === "image") propSuggestions.push("src");
@@ -477,6 +479,7 @@ function ElementOverrides({
         const value = overrides.props![key];
         const isColor = key === "fill" || key === "color";
         const isSrc = key === "src" || key === "imageSrc";
+        const isRichText = key === "content";
 
         return (
           <div
@@ -507,7 +510,12 @@ function ElementOverrides({
               </button>
             </div>
 
-            {isColor ? (
+            {isRichText ? (
+              <RichTextValueEditor
+                value={value as RichTextDoc}
+                onChange={(doc) => setPropOverride(key, doc)}
+              />
+            ) : isColor ? (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input
                   type="color"
@@ -591,6 +599,7 @@ function getAllElements(elements: any[]): any[] {
 
 function getDefaultValue(propName: string): unknown {
   if (propName === "fill" || propName === "color") return "#3b82f6";
+  if (propName === "content") return plainTextToRichTextDoc("Text");
   if (propName === "text" || propName === "label") return "Text";
   if (propName === "src" || propName === "imageSrc") return "";
   return "";

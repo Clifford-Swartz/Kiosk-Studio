@@ -1,4 +1,5 @@
 import type { Scene, Element } from "../model/types.js";
+import { plainTextToRichTextDoc } from "../model/richText.js";
 
 /**
  * Scene state runtime manages active state and applies visibility + property overrides.
@@ -84,9 +85,23 @@ export class StateRuntime {
       result.visible = elementOverride.visible;
     }
 
-    // Apply property overrides (return only overrides, let pipeline merge)
+    // Apply property overrides, merged onto the element's own props — a
+    // wholesale replace would drop every other prop (fontSize, color,
+    // content, ...) the moment a single key is overridden.
     if (elementOverride.props) {
-      result.props = elementOverride.props;
+      const props: Record<string, unknown> = { ...element.props, ...elementOverride.props };
+      // A plain-string "text" override predates the richtext `content` field
+      // and would otherwise be silently shadowed by stale `content` at
+      // render time (TextElement prefers `content` when present). Keep them
+      // in sync unless the override explicitly set `content` itself.
+      if (
+        element.type === "text" &&
+        typeof elementOverride.props.text === "string" &&
+        elementOverride.props.content === undefined
+      ) {
+        props.content = plainTextToRichTextDoc(elementOverride.props.text);
+      }
+      result.props = props;
     }
 
     return result;

@@ -258,14 +258,25 @@ export function executeTool(name: string, args: Record<string, unknown>): string
         if (!el) return `Error: no element with id "${elementId}" in the active scene.`;
 
         const whitelist = new Set(getEditableProps(el.type).map((p) => p.key));
-        const props = (args.props ?? {}) as Record<string, unknown>;
-        const invalidKeys = Object.keys(props).filter((k) => !whitelist.has(k));
+        const allProps = (args.props ?? {}) as Record<string, unknown>;
+        const invalidKeys = Object.keys(allProps).filter((k) => !whitelist.has(k));
         if (invalidKeys.length > 0) {
           return `Error: invalid prop key(s) for element type "${el.type}": ${invalidKeys.join(", ")}. ` +
             `Valid keys: ${[...whitelist].join(", ") || "(none)"}`;
         }
 
-        store.updateElementProps(elementId, props);
+        // "opacity" and "visible" live on the element root, not element.props —
+        // route them through updateElement so they actually take effect.
+        const { opacity, visible, ...props } = allProps;
+        const rootPatch: Record<string, unknown> = {};
+        if (opacity !== undefined) rootPatch.opacity = Number(opacity);
+        if (visible !== undefined) rootPatch.visible = Boolean(visible);
+        if (Object.keys(rootPatch).length > 0) {
+          store.updateElement(elementId, rootPatch);
+        }
+        if (Object.keys(props).length > 0) {
+          store.updateElementProps(elementId, props);
+        }
         return "OK";
       }
       default:
