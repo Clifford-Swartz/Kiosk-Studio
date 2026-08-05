@@ -129,16 +129,24 @@ export class AnimationRuntime {
 
           this.activeTweens.delete(key);
 
-          // Clear this element's animation overrides now that value is persisted
-          const overrides = this.currentOverrides.get(elementId);
-          if (overrides) {
-            for (const field of getFields(property)) {
-              delete overrides[field as keyof Element];
-            }
+          // Clear this element's animation overrides now that the value is
+          // persisted elsewhere. Transient tweens skip this: nothing else
+          // holds their value, so clearing immediately would snap the
+          // property back to its pre-tween value for a frame (visible as a
+          // flicker) before a caller-chained tween (e.g. the fade-in half of
+          // a state-change fade) picks it back up. The caller is responsible
+          // for releasing it via clearTransientOverride() once truly done.
+          if (!transient) {
+            const overrides = this.currentOverrides.get(elementId);
+            if (overrides) {
+              for (const field of getFields(property)) {
+                delete overrides[field as keyof Element];
+              }
 
-            // Remove element entry if no more overrides
-            if (Object.keys(overrides).length === 0) {
-              this.currentOverrides.delete(elementId);
+              // Remove element entry if no more overrides
+              if (Object.keys(overrides).length === 0) {
+                this.currentOverrides.delete(elementId);
+              }
             }
           }
 
@@ -192,6 +200,27 @@ export class AnimationRuntime {
       this.activeMediaScrubs.set(elementId, scrub);
       this.startLoop();
     });
+  }
+
+  /**
+   * Release a transient tween's held-over override value for a property.
+   * Transient tweens (see `animate`'s `transient` param) don't clear their
+   * override on completion so a caller can chain a second transient tween
+   * on the same key without a one-frame flicker in between (e.g. the
+   * fade-out/fade-in pair behind an animated scene-state change in
+   * Player.tsx). Call this once the chain is actually done, or the held
+   * value keeps masking whatever the property should resolve to next.
+   */
+  clearTransientOverride(elementId: string, property: AnimatableProperty): void {
+    const overrides = this.currentOverrides.get(elementId);
+    if (!overrides) return;
+    for (const field of getFields(property)) {
+      delete overrides[field as keyof Element];
+    }
+    if (Object.keys(overrides).length === 0) {
+      this.currentOverrides.delete(elementId);
+    }
+    this.updateOverrides();
   }
 
   /**

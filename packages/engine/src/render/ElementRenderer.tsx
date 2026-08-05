@@ -1134,7 +1134,11 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, onIncompatib
 
 // --- text element (per-character rich text + autofit) ----------------------
 
-const LINE_HEIGHT = 1.15; // tight, close to PowerPoint's default
+// Exported so RichTextEditor.tsx's live editing overlay can match this
+// exactly — including the blank-paragraph compression below — instead of
+// drifting from whatever the browser's default line-height happens to be.
+export const TEXT_LINE_HEIGHT = 1.15; // tight, close to PowerPoint's default
+const LINE_HEIGHT = TEXT_LINE_HEIGHT;
 const LIST_INDENT_PX = 28;
 
 /**

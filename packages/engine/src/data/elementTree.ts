@@ -131,6 +131,28 @@ export function collectElements(elements: Element[], predicate?: (el: Element) =
   return result;
 }
 
+/**
+ * Collect elements matching `predicate`, cascading a match down into every
+ * descendant of a matched layer/collection — a layer's own visibility/props
+ * change also changes how everything nested inside it appears, even though
+ * only the layer itself is named in whatever produced `predicate` (e.g. a
+ * scene state's override map).
+ */
+export function collectElementsWithDescendants(elements: Element[], predicate: (el: Element) => boolean): Element[] {
+  const result: Element[] = [];
+  const walk = (els: Element[], inherited: boolean): void => {
+    for (const el of els) {
+      const matched = inherited || predicate(el);
+      if (matched) result.push(el);
+      if (canHaveChildren(el)) {
+        walk(el.children!, matched);
+      }
+    }
+  };
+  walk(elements, false);
+  return result;
+}
+
 /** Immutably apply `transform` to the element matching `id`, rebuilding only the path to it. */
 export function patchElement(elements: Element[], id: string, transform: (el: Element) => Element): Element[] {
   return elements.map((el) => {

@@ -18,7 +18,7 @@ export {
 export type { RichTextSpan, RichTextParagraph, RichTextDoc, LegacyTextRun } from "./model/richText.js";
 
 // Rendering: shared primitives used by Player and Editor.
-export { ElementRenderer, resolveSrc, isVideoSrc } from "./render/ElementRenderer.js";
+export { ElementRenderer, resolveSrc, isVideoSrc, TEXT_LINE_HEIGHT } from "./render/ElementRenderer.js";
 export type { ElementRendererProps } from "./render/ElementRenderer.js";
 export { Player } from "./render/Player.js";
 export type { PlayerProps } from "./render/Player.js";

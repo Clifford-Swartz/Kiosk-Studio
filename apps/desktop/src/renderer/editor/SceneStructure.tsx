@@ -186,12 +186,21 @@ export function SceneStructure() {
         alert(error); // Show validation error to user
       }
     }
-    // Reordering mode — only meaningful within the dragged element's own
-    // sibling array, since reorderElement always moves within whatever
-    // container currently holds it.
+    // Reordering mode — the target's container may differ from the dragged
+    // element's current container, in which case reparent first (into the
+    // target's own container, which may be scene root) then reorder into
+    // position within that container.
     else if (overId && overId !== dragId) {
       const targetNode = rows.find((n) => n.element.id === overId);
-      if (targetNode && targetNode.parentId === draggedNode.parentId) {
+      if (targetNode) {
+        if (targetNode.parentId !== draggedNode.parentId) {
+          const error = reparentElement(draggedNode.element.id, targetNode.parentId);
+          if (error) {
+            alert(error);
+            resetDragState();
+            return;
+          }
+        }
         reorderElement(draggedNode.element.id, targetNode.arrayIndex);
       }
     }
@@ -241,20 +250,19 @@ export function SceneStructure() {
               if (dragId === null || dragId === el.id) return;
 
               const draggedNode = rows.find((n) => n.element.id === dragId);
-              // Reordering only makes sense within the dragged element's own
-              // container — a different container's row can still accept a
-              // reparent (drop into it), but never a reorder line.
-              if (!draggedNode || draggedNode.parentId !== node.parentId) {
-                if (canAcceptChildren) {
-                  setReparentTargetId(el.id);
-                  setOverId(null);
-                } else {
-                  setReparentTargetId(null);
-                  setOverId(null);
-                }
+              if (!draggedNode) {
+                setReparentTargetId(null);
+                setOverId(null);
                 return;
               }
 
+              // Every row uses the same edge/middle split, regardless of
+              // whether the hovered row shares the dragged element's
+              // container: middle 50% of a container row reparents into it,
+              // top/bottom 25% (or any hover on a non-container row) yields
+              // a reorder target anchored to that row's own container and
+              // position — which may be a different container (or scene
+              // root) than the dragged element's current one.
               const rect = e.currentTarget.getBoundingClientRect();
               const y = e.clientY - rect.top;
               const height = rect.height;

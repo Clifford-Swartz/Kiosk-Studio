@@ -11,7 +11,7 @@ import { AnimationRuntime } from "../runtime/AnimationRuntime.js";
 import { StateRuntime } from "../runtime/StateRuntime.js";
 import { decomposeValue } from "../runtime/PropertyRegistry.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
-import { walkElementTree } from "../data/elementTree.js";
+import { collectElementsWithDescendants } from "../data/elementTree.js";
 
 export interface PlayerProps {
   project: Project;
@@ -428,11 +428,21 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         const sceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
         const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
         const fadeMs = (duration ?? 300) / 2;
-        const fadeElements: Element[] = [];
+        let fadeElements: Element[] = [];
         if (animated && activeScene) {
-          walkElementTree(activeScene.elements, (el) => fadeElements.push(el));
-          // Fade every element out first. transient=true so these tweens don't
-          // persist a permanent opacity override once they complete.
+          // Only fade elements actually overridden by the outgoing or incoming
+          // state (whole-scene fades are scene transitions' job, not this).
+          // A match on a layer/collection cascades to its descendants — the
+          // override toggles the whole layer's visibility/props, so anything
+          // nested inside it changes too even though only the layer itself is
+          // named in the state's override map.
+          const fromStateName = stateRuntime.getActiveState() ?? "default";
+          const fromIds = activeScene.states?.[fromStateName]?.elements ?? {};
+          const toIds = activeScene.states?.[stateName]?.elements ?? {};
+          const affectedIds = new Set([...Object.keys(fromIds), ...Object.keys(toIds)]);
+          fadeElements = collectElementsWithDescendants(activeScene.elements, (el) => affectedIds.has(el.id));
+          // Fade every affected element out first. transient=true so these tweens
+          // don't persist a permanent opacity override once they complete.
           await Promise.all(
             fadeElements.map((el) =>
               animationRuntime.animate(el.id, "opacity", undefined, 0, fadeMs, "linear", 0, true)
@@ -466,6 +476,11 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
               return animationRuntime.animate(el.id, "opacity", 0, target, fadeMs, "linear", 0, true);
             })
           );
+          // Both halves of the fade are transient and hold their value on
+          // completion (see AnimationRuntime.animate) so the gap between
+          // fade-out and fade-in doesn't flicker. Release the fade-in's held
+          // value now that the chain is done, or it'd mask future changes.
+          fadeElements.forEach((el) => animationRuntime.clearTransientOverride(el.id, "opacity"));
         }
       },
       project,
