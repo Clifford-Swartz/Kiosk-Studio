@@ -43,6 +43,12 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_TAG_ID)) {
   const style = document.createElement("style");
   style.id = STYLE_TAG_ID;
   style.textContent = `
+    /* Lexical applies Tab-indent on plain paragraphs as
+       calc(indent * var(--lexical-indent-base-value, 40px)) padding —
+       override the base value to match LIST_INDENT_PX (ElementRenderer.tsx)
+       so a Tab-indented paragraph shows the same visual step live as it
+       will once rendered read-only. */
+    :root { --lexical-indent-base-value: 28px; }
     .${PARAGRAPH_CLASS}, .${LISTITEM_CLASS} { margin: 0; width: 100%; line-height: ${TEXT_LINE_HEIGHT}; }
     .${PARAGRAPH_CLASS}[data-blank="true"] { line-height: 0.5; }
     .${PARAGRAPH_CLASS}[data-blank="true"]::before { content: "\\00a0"; }

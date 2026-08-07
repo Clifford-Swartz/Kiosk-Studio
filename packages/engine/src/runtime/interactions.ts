@@ -44,13 +44,6 @@ export interface PlayerContext {
  * Now async to support blocking animations in interaction sequences.
  */
 export async function runInteraction(interaction: Interaction, ctx: PlayerContext, element?: Element): Promise<void> {
-  console.log(`[DEBUG-anim] runInteraction() called:`, {
-    trigger: interaction.trigger,
-    actionsCount: interaction.actions.length,
-    elementId: element?.id,
-    elementType: element?.type,
-  });
-
   // Emit element event for trigger
   if (element) {
     switch (interaction.trigger) {
@@ -83,12 +76,7 @@ export async function runInteraction(interaction: Interaction, ctx: PlayerContex
 
   for (let i = 0; i < interaction.actions.length; i++) {
     const action = interaction.actions[i];
-    console.log(`[DEBUG-anim] Running action ${i + 1}/${interaction.actions.length}:`, {
-      type: action.type,
-      params: action.params,
-    });
     await runAction(action, ctx, element);
-    console.log(`[DEBUG-anim] Action ${i + 1}/${interaction.actions.length} completed`);
   }
 }
 
@@ -220,21 +208,10 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
 
     case "animate": {
       const { target, property, from, to, duration, easing, delay } = action.params;
-      console.log(`[DEBUG-anim] runAction('animate') called with params:`, {
-        target,
-        property,
-        from,
-        to,
-        duration,
-        easing,
-        delay,
-      });
       if (typeof target !== "string" || typeof property !== "string" || !to || typeof duration !== "number") {
-        console.error(`[DEBUG-anim] runAction('animate') validation failed - missing required params`);
         warn("animate needs params.target (string), params.property (string), params.to, params.duration (number)");
         return;
       }
-      console.log(`[DEBUG-anim] runAction('animate') calling ctx.animate()...`);
       await ctx.animate(
         target,
         property as AnimatableProperty,
@@ -244,7 +221,6 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
         (easing as EasingCurve) ?? "linear",
         (delay as number) ?? 0
       );
-      console.log(`[DEBUG-anim] runAction('animate') ctx.animate() completed`);
       return;
     }
 

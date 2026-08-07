@@ -1290,6 +1290,7 @@ function TextElement({
                 // of them doesn't push content off the box.
                 lineHeight: blank ? 0.5 : LINE_HEIGHT,
                 textAlign: paragraphAlign,
+                paddingLeft: (p.indent ?? 0) * LIST_INDENT_PX,
               }}
             >
               {blank ? " " : renderSpans(p.spans, fontSize, baseColor, baseWeight, baseFontStyle, baseTextDecoration)}

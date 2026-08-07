@@ -18,6 +18,8 @@ export interface RichTextParagraph {
   align?: "left" | "center" | "right";
   fontSize?: number;
   list?: { kind: "bullet" | "number"; level: number };
+  /** Tab-indent depth for non-list paragraphs (list items use `list.level` instead). */
+  indent?: number;
 }
 
 export interface RichTextDoc {

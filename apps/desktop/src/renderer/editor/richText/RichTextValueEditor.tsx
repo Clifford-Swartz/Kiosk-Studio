@@ -7,6 +7,7 @@ import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
+import { TabIndentationPlugin } from "@lexical/react/LexicalTabIndentationPlugin";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import type { RichTextDoc } from "@kiosk/engine";
 import { lexicalStateToRichTextDoc, richTextDocToLexicalNodes } from "./lexicalAdapter.js";
@@ -60,6 +61,7 @@ export function RichTextValueEditor({ value, onChange }: { value: RichTextDoc; o
         ErrorBoundary={LexicalErrorBoundary}
       />
       <ListPlugin />
+      <TabIndentationPlugin />
       <OnChangePlugin onChange={(editorState) => onChange(lexicalStateToRichTextDoc(editorState))} />
     </LexicalComposer>
   );

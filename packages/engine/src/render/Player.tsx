@@ -145,8 +145,6 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     // Wire persist callback so animations can write final values to interaction override store
     animationRuntime.setPersistToOverrides((elementId, property, value) => {
-      console.log(`[DEBUG-anim] Persist callback invoked:`, { elementId, property, value });
-
       const decomposed = decomposeValue(property, value);
       for (const [field, val] of Object.entries(decomposed)) {
         overrideHost.setOverride(elementId, field, val);
@@ -411,18 +409,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         }
       },
       animate: async (elementId, property, from, to, duration, easing, delay) => {
-        console.log(`[DEBUG-anim] PlayerContext.animate() wrapper called:`, {
-          elementId,
-          property,
-          from,
-          to,
-          duration,
-          easing,
-          delay,
-        });
-        const result = await animationRuntime.animate(elementId, property, from, to, duration, easing, delay);
-        console.log(`[DEBUG-anim] PlayerContext.animate() wrapper completed`);
-        return result;
+        return animationRuntime.animate(elementId, property, from, to, duration, easing, delay);
       },
       setState: async (stateName, animated, duration) => {
         const sceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
@@ -472,7 +459,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           // new state (not assumed to be 1 — the new state may itself set opacity).
           await Promise.all(
             fadeElements.map((el) => {
-              const target = resolveElement(el).opacity;
+              const target = animationRuntime.resolveRestingValue(el.id, "opacity") as number;
               return animationRuntime.animate(el.id, "opacity", 0, target, fadeMs, "linear", 0, true);
             })
           );
@@ -566,19 +553,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
   const handleTap = useCallback(
     async (element: Element) => {
-      console.log(`[DEBUG-anim] handleTap() called for element:`, {
-        elementId: element.id,
-        elementType: element.type,
-        interactionsCount: element.interactions.length,
-      });
       const tapInteractions = element.interactions.filter(i => i.trigger === "tap");
-      console.log(`[DEBUG-anim] Found ${tapInteractions.length} tap interactions`);
       // Run sequentially to avoid setState races
       for (const interaction of tapInteractions) {
-        console.log(`[DEBUG-anim] Running tap interaction:`, {
-          interactionId: interaction.id,
-          actionsCount: interaction.actions.length,
-        });
         await runInteraction(interaction, ctx, element);
       }
     },
