@@ -1,4 +1,5 @@
 import type { Element, ElementType, Project, Scene } from "./types.js";
+import { plainTextToRichTextDoc } from "./richText.js";
 
 /**
  * Factories for new model objects. The editor (and any future tooling) build
@@ -24,7 +25,13 @@ const TYPE_DEFAULTS: Record<
   text: {
     width: 480,
     height: 80,
-    props: { text: "Text", color: "#ffffff", fontSize: 40, align: "left" },
+    props: {
+      text: "Text",
+      content: plainTextToRichTextDoc("Text"),
+      color: "#ffffff",
+      fontSize: 40,
+      align: "left",
+    },
   },
   image: {
     width: 320,
@@ -66,6 +73,41 @@ const TYPE_DEFAULTS: Record<
     },
   },
   layer: { width: 1920, height: 1080, props: {} },
+  table: {
+    width: 400,
+    height: 160,
+    props: {
+      colWidths: [200, 200],
+      rowHeights: [40, 40, 40, 40],
+      cells: [
+        [{ text: "Header 1", bold: true }, { text: "Header 2", bold: true }],
+        [{ text: "" }, { text: "" }],
+        [{ text: "" }, { text: "" }],
+        [{ text: "" }, { text: "" }],
+      ],
+      borderColor: "#94a3b8",
+      borderWidth: 1,
+    },
+  },
+  line: {
+    width: 240,
+    height: 120,
+    props: {
+      x1: 0, y1: 0, x2: 1, y2: 1,
+      strokeColor: "#0f172a",
+      strokeWidth: 2,
+      startArrow: "none",
+      endArrow: "none",
+      dash: "solid",
+    },
+  },
+  html: {
+    width: 480,
+    height: 320,
+    props: {
+      html: '<div style="padding:16px;color:#fff;font-family:system-ui">Custom HTML</div>',
+    },
+  },
   collection: {
     width: 900,
     height: 520,
@@ -111,6 +153,7 @@ export function createElement(
     tint: partial.tint,
     mask: partial.mask,
     locked: partial.locked ?? false,
+    visible: partial.visible ?? true,
     children: partial.children,
   };
 }
@@ -130,7 +173,7 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
 export function createProject(partial: Partial<Project> = {}): Project {
   const scenes = partial.scenes ?? [createScene({ name: "Home" })];
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: partial.id ?? newId("proj"),
     name: partial.name ?? "Untitled",
     width: partial.width ?? 1920,

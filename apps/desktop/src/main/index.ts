@@ -1,12 +1,17 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, webContents, screen, Menu } from "electron";
 import { getConnectorFactory, type Connector, type ConnectorValue, type SourceSpec } from "@kiosk/connectors";
-import { parsePptx } from "@kiosk/pptx";
+import { parsePptx, toWireDeck } from "@kiosk/pptx";
+import Store from "electron-store";
 import { appendFileSync, createReadStream } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir, appendFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
+import { probeMedia, reencodeVideo as reencodeVideoFile, dedupeFilename, type MediaProbeResult } from "./mediaSupport.js";
+
+/** Local settings (API key, etc.) — not part of any saved project. */
+const settingsStore = new Store<{ openaiApiKey?: string }>({ name: "kiosk-settings" });
 
 /**
  * Custom protocol for serving project assets. Using file:// directly fails in
@@ -387,24 +392,23 @@ async function copyToUserContent(sourcePath: string): Promise<string> {
   const contentDir = getSharedUserContentPath();
   await mkdir(contentDir, { recursive: true });
 
-  const fileName = basename(sourcePath);
-  let targetPath = join(contentDir, fileName);
-  let finalName = fileName;
-
-  if (await fileExists(targetPath)) {
-    const ext = extname(fileName);
-    const base = fileName.slice(0, -ext.length);
-    let i = 1;
-    while (await fileExists(join(contentDir, `${base}_${i}${ext}`))) {
-      i++;
-    }
-    finalName = `${base}_${i}${ext}`;
-    targetPath = join(contentDir, finalName);
-  }
-
+  const finalName = await dedupeFilename(contentDir, basename(sourcePath));
   const buf = await readFile(sourcePath);
-  await writeFile(targetPath, buf);
+  await writeFile(join(contentDir, finalName), buf);
   return `user-content/${finalName}`;
+}
+
+/**
+ * Resolve a project-relative asset path ("user-content/x" or "assets/x") to an
+ * absolute path, using the same "user-content/ -> app root, assets/ -> project
+ * dir" convention as saveAsset/copyToUserContent above. `projectPath` may be
+ * null for an unsaved project (only user-content/ paths are valid then).
+ */
+function resolveRelativeAssetPath(projectPath: string | null, relativePath: string): string {
+  if (relativePath.startsWith("assets/") && projectPath) {
+    return join(dirname(projectPath), relativePath);
+  }
+  return join(getAppRoot(), relativePath);
 }
 
 /** Check if a file exists without throwing. */
@@ -454,9 +458,9 @@ async function pickContent(
 ): Promise<{ name: string; path: string } | null> {
   const filterMap: Record<string, string[]> = {
     image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
-    video: ["mp4", "webm"],
+    video: ["mp4", "webm", "mov"],
     audio: ["mp3", "wav", "ogg"],
-    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm"],
+    media: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "mp4", "webm", "mov"],
   };
 
   const contentDir = getSharedUserContentPath();
@@ -495,6 +499,46 @@ async function copyExternalFile(
 }
 
 /**
+ * Probe a project-relative video's codecs so the renderer can warn before
+ * importing (or offer to fix) a file Chromium's <video> can't decode.
+ */
+async function probeVideo(
+  _e: unknown,
+  projectPath: string | null,
+  relativePath: string
+): Promise<MediaProbeResult> {
+  const absPath = resolveRelativeAssetPath(projectPath, relativePath);
+  return probeMedia(absPath);
+}
+
+/**
+ * Re-encode a project-relative video to H.264/AAC mp4, alongside the source
+ * file, reporting progress to the requesting window via the same "event:emit"
+ * channel used for live data-connector updates. Returns the new relative path.
+ */
+async function reencodeVideo(
+  e: Electron.IpcMainInvokeEvent,
+  projectPath: string | null,
+  relativePath: string
+): Promise<string> {
+  const absSrcPath = resolveRelativeAssetPath(projectPath, relativePath);
+  const dir = dirname(absSrcPath);
+  const outName = await dedupeFilename(dir, `${basename(relativePath, extname(relativePath))}.mp4`);
+  const absOutPath = join(dir, outName);
+
+  const probe = await probeMedia(absSrcPath);
+  const wc = e.sender;
+  await reencodeVideoFile(absSrcPath, absOutPath, probe.durationSec, (percent) => {
+    if (!wc.isDestroyed()) {
+      wc.send("event:emit", { kind: "encodeProgress", payload: { relativePath, percent }, timestamp: Date.now() });
+    }
+  });
+
+  const prefix = relativePath.startsWith("assets/") ? "assets/" : "user-content/";
+  return `${prefix}${outName}`;
+}
+
+/**
  * Show an image open dialog; read the chosen file and return its name + base64
  * contents so the renderer can hand it back to saveAsset. Null if canceled.
  */
@@ -516,29 +560,30 @@ async function pickImage(): Promise<{ name: string; base64: string } | null> {
 
 /**
  * Show a .pptx open dialog, parse it, and return the deck with image bytes
- * base64-encoded (for IPC). Null if canceled. Heavy parse runs here in Node.
+ * base64-encoded (for IPC). Null if canceled or the parse fails. Heavy parse
+ * runs here in Node.
  */
-async function importPptx(): Promise<unknown | null> {
+async function importPptx(): Promise<ReturnType<typeof toWireDeck> | null> {
   const result = await dialog.showOpenDialog({
     title: "Import PowerPoint",
     properties: ["openFile"],
     filters: [{ name: "PowerPoint", extensions: ["pptx"] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  const buf = await readFile(result.filePaths[0]!);
-  const deck = parsePptx(new Uint8Array(buf));
-  // Serialize image bytes as base64 so they survive the IPC boundary.
-  return {
-    slideW: deck.slideW,
-    slideH: deck.slideH,
-    slides: deck.slides.map((s) => ({
-      texts: s.texts,
-      images: s.images.map((im) => ({
-        x: im.x, y: im.y, width: im.width, height: im.height, ext: im.ext,
-        base64: Buffer.from(im.bytes).toString("base64"),
-      })),
-    })),
-  };
+  try {
+    const buf = await readFile(result.filePaths[0]!);
+    const deck = parsePptx(new Uint8Array(buf));
+    return toWireDeck(deck);
+  } catch (err) {
+    console.error(`[pptx:import] Failed to parse ${result.filePaths[0]}:`, err);
+    await dialog.showMessageBox({
+      type: "error",
+      title: "PowerPoint Import Failed",
+      message: `Could not read this PowerPoint file: ${err instanceof Error ? err.message : String(err)}`,
+      buttons: ["OK"],
+    });
+    return null;
+  }
 }
 
 /**
@@ -714,6 +759,51 @@ async function exportProject(
   }
 }
 
+// --- AI chat proxy ---------------------------------------------------------
+// Main process holds the OpenAI API key (electron-store, never sent back to
+// the renderer). The renderer drives the agentic tool-call loop itself; this
+// handler is a dumb proxy — forward messages+tools, return the raw response.
+
+function getAiKey(): string | null {
+  return settingsStore.get("openaiApiKey") ?? null;
+}
+
+function setAiKey(_e: unknown, key: string): void {
+  settingsStore.set("openaiApiKey", key);
+}
+
+async function aiChat(
+  _e: unknown,
+  messages: unknown[],
+  tools: unknown[]
+): Promise<{ error: string } | Record<string, unknown>> {
+  const apiKey = getAiKey();
+  if (!apiKey) return { error: "No OpenAI API key configured." };
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages,
+        ...(tools.length > 0 ? { tools } : {}),
+      }),
+    });
+
+    const json = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      return { error: `OpenAI API error (${res.status}): ${JSON.stringify(json)}` };
+    }
+    return json;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // --- Connector host -------------------------------------------------------
 // Runs one connector per active data source (in this Node process) and forwards
 // each emitted value to the renderer that requested the live session. Only one
@@ -793,65 +883,44 @@ app.whenReady().then(async () => {
   protocol.handle(ASSET_SCHEME, async (request) => {
     const url = new URL(request.url);
     // kioskasset://load/<encoded-project-dir>/<relative-path>
-    const fullPath = url.pathname.replace(/^\/+/, "");
-    const decoded = decodeURIComponent(fullPath);
+    // The project dir is a single URL segment, individually percent-encoded by
+    // the renderer (assets.ts: encodeURIComponent(base)) — its own path
+    // separators are escaped to %2F. The relative path is everything after
+    // that segment, with each of ITS segments individually encoded by
+    // resolveSrc(). Splitting on the first raw "/" before decoding anything
+    // recovers the exact boundary the renderer intended, so project dirs work
+    // regardless of what the folder happens to be named (earlier versions of
+    // this handler instead guessed the boundary from a ".kproj" suffix in the
+    // fully-decoded string, which broke for "Save As" locations and for
+    // exported/renamed folders that don't end in ".kproj").
+    const rawPath = url.pathname.replace(/^\/+/, "");
+    const slashIndex = rawPath.indexOf("/");
+    const projectDir = decodeURIComponent(slashIndex === -1 ? rawPath : rawPath.slice(0, slashIndex));
+    const relativePath = slashIndex === -1 ? "" : decodeURIComponent(rawPath.slice(slashIndex + 1));
 
     console.log(`[${ASSET_SCHEME}] Request: ${request.url}`);
-    console.log(`[${ASSET_SCHEME}] Decoded: ${decoded}`);
-
-    // Parse project directory and relative path
-    // Look for .kproj/ boundary
-    const kprojMatch = decoded.match(/^(.+\.kproj)[/\\](.+)$/);
+    console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
+    console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
 
     let absPath: string;
 
-    if (!kprojMatch) {
-      // Fallback: no .kproj boundary found
-      // Check if path contains user-content/ or assets/ segment
-      const userContentIndex = decoded.indexOf("user-content/");
-      const assetsIndex = decoded.indexOf("assets/");
-
-      if (userContentIndex >= 0) {
-        // Extract relative path from user-content/ onwards
-        const relativePath = decoded.slice(userContentIndex);
-        absPath = normalize(join(getAppRoot(), relativePath));
-        console.log(`[${ASSET_SCHEME}] Fallback user-content: ${relativePath} → ${absPath}`);
-      } else if (assetsIndex >= 0) {
-        // Extract relative path from assets/ onwards
-        const relativePath = decoded.slice(assetsIndex);
-        absPath = normalize(join(getAppRoot(), relativePath));
-        console.log(`[${ASSET_SCHEME}] Fallback assets: ${relativePath} → ${absPath}`);
-      } else {
-        // No known prefix → treat as absolute path
-        absPath = normalize(decoded);
-      }
-    } else {
-      const projectDir = kprojMatch[1];
-      const relativePath = kprojMatch[2];
-
-      console.log(`[${ASSET_SCHEME}] Project: ${projectDir}`);
-      console.log(`[${ASSET_SCHEME}] Relative: ${relativePath}`);
-
+    if (relativePath.startsWith("user-content/")) {
       const exported = await isProjectExported(projectDir);
       console.log(`[${ASSET_SCHEME}] Exported: ${exported}`);
-
-      // Resolve based on exported flag and path prefix
-      if (relativePath.startsWith("user-content/")) {
-        if (exported) {
-          // Exported: user-content refs should have been rewritten to assets/
-          absPath = normalize(join(projectDir, "assets", basename(relativePath)));
-          console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
-        } else {
-          // Working: resolve user-content/ from app root
-          absPath = normalize(join(getAppRoot(), relativePath));
-        }
-      } else if (relativePath.startsWith("assets/")) {
-        // Both: assets/ resolves from project dir
-        absPath = normalize(join(projectDir, relativePath));
+      if (exported) {
+        // Exported: user-content refs should have been rewritten to assets/
+        absPath = normalize(join(projectDir, "assets", basename(relativePath)));
+        console.log(`[${ASSET_SCHEME}] Warning: Exported project referencing user-content/`);
       } else {
-        // No prefix: absolute path fallback
-        absPath = normalize(decoded);
+        // Working: resolve user-content/ from app root
+        absPath = normalize(join(getAppRoot(), relativePath));
       }
+    } else if (relativePath) {
+      // assets/ (and any other project-relative reference) resolves from the
+      // project dir the renderer actually passed as the base.
+      absPath = normalize(join(projectDir, relativePath));
+    } else {
+      absPath = normalize(projectDir);
     }
 
     console.log(`[${ASSET_SCHEME}] Resolved: ${absPath}`);
@@ -870,7 +939,7 @@ app.whenReady().then(async () => {
 
       const ext = extname(absPath).toLowerCase();
       const mimeMap: Record<string, string> = {
-        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
         ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
@@ -931,6 +1000,10 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(absPath).toString());
   });
 
+  ipcMain.handle("ai:chat", aiChat);
+  ipcMain.handle("ai:getKey", () => (getAiKey() ? true : false));
+  ipcMain.handle("ai:setKey", setAiKey);
+
   ipcMain.handle("project:load", loadProject);
   ipcMain.handle("project:pick", pickProject);
   ipcMain.handle("project:save", saveProject);
@@ -940,6 +1013,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("assets:pick", pickImage);
   ipcMain.handle("content:pick", pickContent);
   ipcMain.handle("content:copyExternal", copyExternalFile);
+  ipcMain.handle("media:probe", probeVideo);
+  ipcMain.handle("media:reencode", reencodeVideo);
   ipcMain.handle("pptx:import", importPptx);
   ipcMain.handle("data:start", startData);
   ipcMain.handle("data:stop", stopData);
@@ -951,19 +1026,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("kiosk:info", () => ({ kiosk: IS_KIOSK, projectPath: KIOSK_PROJECT }));
   ipcMain.handle("analytics:write", async (_e, path: string, data: string, appendMode: boolean) => {
     try {
-      // Resolve to absolute path (relative paths are resolved against userData)
-      const absPath = isAbsolute(path) ? normalize(path) : join(app.getPath("userData"), path);
+      // Resolve to absolute path (relative paths are resolved against the app root,
+      // matching Exports/ and user-content/, so users find sink files next to the app).
+      const appRoot = getAppRoot();
+      const absPath = isAbsolute(path) ? normalize(path) : join(appRoot, path);
 
-      // Security: Validate path is within safe boundaries (userData or temp)
+      // Security: Validate path is within safe boundaries (app root, userData, or temp)
       const userDataDir = app.getPath("userData");
       const tempDir = app.getPath("temp");
+      const isInAppRoot = absPath.startsWith(appRoot);
       const isInUserData = absPath.startsWith(userDataDir);
       const isInTemp = absPath.startsWith(tempDir);
 
-      if (!isInUserData && !isInTemp) {
+      if (!isInAppRoot && !isInUserData && !isInTemp) {
         return {
           success: false,
-          error: `Path outside allowed directories. Must be in ${userDataDir} or ${tempDir}`
+          error: `Path outside allowed directories. Must be in ${appRoot}, ${userDataDir}, or ${tempDir}`
         };
       }
 

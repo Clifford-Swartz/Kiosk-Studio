@@ -2,8 +2,18 @@ import React, { useEffect, useRef } from "react";
 import type { Element } from "@kiosk/engine";
 import { isRestConnector } from "@kiosk/engine";
 import { useEditor } from "./store.js";
-import { importContentFile, validateAudioFile } from "./assets.js";
+import { importContentFile, importVideoAware, validateAudioFile } from "./assets.js";
 import { InteractionsEditor } from "./InteractionsEditor.js";
+import { Row } from "./components/Row.js";
+
+/** Checkbox/toggle row: label and control side by side on one line, rather than stacked. */
+function CheckRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Row label={label} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      {children}
+    </Row>
+  );
+}
 
 /**
  * Debounce a value to reduce rapid history entries. The value updates
@@ -131,7 +141,7 @@ export function PropertiesPanel() {
             <div style={{ color: "#94a3b8", fontSize: 11, padding: "4px 4px 8px" }}>
               {elements.length} children selected
             </div>
-            <TypeFields element={parentLayer} updateProps={updateProps} />
+            <TypeFields element={parentLayer} updateProps={updateProps} updateElement={updateElement} />
           </div>
         );
       }
@@ -159,10 +169,14 @@ export function PropertiesPanel() {
 
       {el.type !== "layer" && (
         <>
-          <Row label="X"><Num value={el.x} onChange={debouncedNumCb("x")} /></Row>
-          <Row label="Y"><Num value={el.y} onChange={debouncedNumCb("y")} /></Row>
-          <Row label="W"><Num value={el.width} onChange={debouncedNumCb("width")} /></Row>
-          <Row label="H"><Num value={el.height} onChange={debouncedNumCb("height")} /></Row>
+          <div style={{ display: "flex", gap: 8, margin: "6px 0" }}>
+            <Row label="X" style={{ flex: 1, margin: 0 }}><Num value={el.x} onChange={debouncedNumCb("x")} /></Row>
+            <Row label="Y" style={{ flex: 1, margin: 0 }}><Num value={el.y} onChange={debouncedNumCb("y")} /></Row>
+          </div>
+          <div style={{ display: "flex", gap: 8, margin: "6px 0" }}>
+            <Row label="W" style={{ flex: 1, margin: 0 }}><Num value={el.width} onChange={debouncedNumCb("width")} /></Row>
+            <Row label="H" style={{ flex: 1, margin: 0 }}><Num value={el.height} onChange={debouncedNumCb("height")} /></Row>
+          </div>
           <Row label="Rotation"><Num value={el.rotation} onChange={debouncedNumCb("rotation")} /></Row>
         </>
       )}
@@ -179,7 +193,7 @@ export function PropertiesPanel() {
       </Row>
 
       <div style={{ ...heading, marginTop: 14 }}>{el.type} content</div>
-      <TypeFields element={el} updateProps={updateProps} />
+      <TypeFields element={el} updateProps={updateProps} updateElement={updateElement} />
 
       <InteractionsEditor elementId={el.id} />
 
@@ -197,9 +211,11 @@ export function PropertiesPanel() {
 function TypeFields({
   element: el,
   updateProps,
+  updateElement,
 }: {
   element: Element;
   updateProps: (id: string, props: Record<string, unknown>) => void;
+  updateElement: (id: string, patch: Partial<Element>) => void;
 }) {
   const set = (k: string, v: unknown) => updateProps(el.id, { [k]: v });
   const debouncedSet = useDebouncedCallback(set, 300);
@@ -207,15 +223,14 @@ function TypeFields({
 
   switch (el.type) {
     case "text":
+      // Free-text editing, per-character bold/italic/underline/color, lists,
+      // and per-paragraph alignment all now live in the in-canvas rich-text
+      // editor + its selection-driven formatting toolbar (double-click to
+      // edit). What's left here is the element's default/base style — the
+      // fallback a span/paragraph uses when it carries no formatting of its
+      // own — plus the data binding.
       return (
         <>
-          <Row label="Text">
-            <textarea
-              value={str(p.text)}
-              onChange={(e) => set("text", e.target.value)}
-              style={{ ...input, height: 60, resize: "vertical" }}
-            />
-          </Row>
           <BindControl elementId={el.id} targetProp="text" />
           <Row label="Size"><Num value={n(p.fontSize, 32)} onChange={(v) => debouncedSet("fontSize", Number(v))} /></Row>
           <Row label="Font">
@@ -231,57 +246,18 @@ function TypeFields({
               ))}
             </select>
           </Row>
-          <Row label="Style">
-            <div style={{ display: "flex", gap: 4 }}>
-              {([
-                { key: "bold", label: "B", active: str(p.fontWeight, "normal") === "bold", weight: 700 as const },
-                { key: "italic", label: "I", active: str(p.fontStyle, "normal") === "italic", weight: 400 as const },
-              ] as const).map((btn) => (
-                <button
-                  key={btn.key}
-                  onClick={() =>
-                    btn.key === "bold"
-                      ? set("fontWeight", btn.active ? "normal" : "bold")
-                      : set("fontStyle", btn.active ? "normal" : "italic")
-                  }
-                  style={{
-                    ...input,
-                    flex: 1,
-                    cursor: "pointer",
-                    fontWeight: btn.weight,
-                    fontStyle: btn.key === "italic" ? "italic" : "normal",
-                    background: btn.active ? "#2563eb" : "#161c26",
-                    color: btn.active ? "#fff" : "#e2e8f0",
-                    border: btn.active ? "1px solid #1d4ed8" : "1px solid #232c3a",
-                  }}
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
-          </Row>
           <Row label="Color"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
-          <Row label="Align">
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["left", "center", "right"] as const).map((alignment) => (
-                <button
-                  key={alignment}
-                  onClick={() => set("align", alignment)}
-                  style={{
-                    ...input,
-                    flex: 1,
-                    cursor: "pointer",
-                    background: str(p.align, "left") === alignment ? "#2563eb" : "#161c26",
-                    color: str(p.align, "left") === alignment ? "#fff" : "#e2e8f0",
-                    border: str(p.align, "left") === alignment ? "1px solid #1d4ed8" : "1px solid #232c3a",
-                  }}
-                >
-                  {alignment.charAt(0).toUpperCase() + alignment.slice(1)}
-                </button>
-              ))}
-            </div>
-          </Row>
         </>
+      );
+    case "html":
+      return (
+        <Row label="HTML Source">
+          <textarea
+            value={str(p.html)}
+            onChange={(e) => debouncedSet("html", e.target.value)}
+            style={{ ...input, minHeight: 160, fontFamily: "monospace", resize: "vertical" }}
+          />
+        </Row>
       );
     case "rectangle":
       return (
@@ -293,6 +269,14 @@ function TypeFields({
     case "button":
       return (
         <>
+          <CheckRow label="Disabled">
+            <input
+              type="checkbox"
+              checked={el.visible === false}
+              onChange={(e) => updateElement(el.id, { visible: !e.target.checked })}
+            />
+          </CheckRow>
+
           <Row label="Label"><Text value={str(p.label, "Button")} onChange={(v) => set("label", v)} /></Row>
 
           <Row label="Fill Type">
@@ -430,7 +414,7 @@ function TypeFields({
                 alert("Save the project first.");
                 return;
               }
-              const rel = await importContentFile("video");
+              const rel = await importVideoAware("video");
               if (rel) set("src", rel);
             }}
           >
@@ -471,37 +455,37 @@ function TypeFields({
             </select>
           </Row>
 
-          <Row label="Autoplay">
+          <CheckRow label="Autoplay">
             <input
               type="checkbox"
               checked={bool(p.autoplay, true)}
               onChange={(e) => set("autoplay", e.target.checked)}
             />
-          </Row>
+          </CheckRow>
 
-          <Row label="Loop">
+          <CheckRow label="Loop">
             <input
               type="checkbox"
               checked={bool(p.loop, true)}
               onChange={(e) => set("loop", e.target.checked)}
             />
-          </Row>
+          </CheckRow>
 
-          <Row label="Muted">
+          <CheckRow label="Muted">
             <input
               type="checkbox"
               checked={bool(p.muted, true)}
               onChange={(e) => set("muted", e.target.checked)}
             />
-          </Row>
+          </CheckRow>
 
-          <Row label="Show controls">
+          <CheckRow label="Show controls">
             <input
               type="checkbox"
               checked={bool(p.showControls, false)}
               onChange={(e) => set("showControls", e.target.checked)}
             />
-          </Row>
+          </CheckRow>
 
           <Row label="Fit">
             <select
@@ -570,27 +554,27 @@ function TypeFields({
           <Row label="Fade (ms)">
             <Num value={n(p.fade, 0)} onChange={(v) => set("fade", Math.max(0, Number(v)))} />
           </Row>
-          <Row label="Autoplay">
+          <CheckRow label="Autoplay">
             <input
               type="checkbox"
               checked={bool(p.autoplay, false)}
               onChange={(e) => set("autoplay", e.target.checked)}
             />
-          </Row>
-          <Row label="Loop">
+          </CheckRow>
+          <CheckRow label="Loop">
             <input
               type="checkbox"
               checked={bool(p.loop, false)}
               onChange={(e) => set("loop", e.target.checked)}
             />
-          </Row>
-          <Row label="Muted">
+          </CheckRow>
+          <CheckRow label="Muted">
             <input
               type="checkbox"
               checked={bool(p.muted, false)}
               onChange={(e) => set("muted", e.target.checked)}
             />
-          </Row>
+          </CheckRow>
         </>
       );
     case "collection":
@@ -627,11 +611,7 @@ function SceneSettings() {
   return (
     <div style={panel}>
       <div style={heading}>Canvas &amp; Scene</div>
-
-      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "0 2px 4px" }}>
-        Canvas size (all scenes)
-      </div>
-      <Row label="Preset">
+      <Row label="Canvas Size">
         <select
           value={presetValue}
           onChange={(e) => {
@@ -657,12 +637,15 @@ function SceneSettings() {
         Match this display
       </button>
 
-      <Row label="Width"><Num value={project.width} onChange={(v) => updateProjectSize({ width: Number(v) })} /></Row>
-      <Row label="Height"><Num value={project.height} onChange={(v) => updateProjectSize({ height: Number(v) })} /></Row>
-
-      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "14px 2px 4px" }}>
-        Scene "{scene.name}"
+      <div style={{ display: "flex", gap: 8, margin: "6px 0" }}>
+        <Row label="Width" style={{ flex: 1, margin: 0 }}>
+          <Num value={project.width} onChange={(v) => updateProjectSize({ width: Number(v) })} />
+        </Row>
+        <Row label="Height" style={{ flex: 1, margin: 0 }}>
+          <Num value={project.height} onChange={(v) => updateProjectSize({ height: Number(v) })} />
+        </Row>
       </div>
+
       <Row label="Background">
         <Color
           value={scene.background.startsWith('#') ? scene.background : '#0f172a'}
@@ -670,8 +653,8 @@ function SceneSettings() {
         />
       </Row>
 
-      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "12px 2px 4px" }}>
-        Background image (overrides color)
+      <div style={{ color: "#7185b4", fontSize: 14, fontWeight: 500, letterSpacing: 0.3, margin: "12px 2px 6px" }}>
+        Background Image / Video
       </div>
       <button
         style={chooseBtn}
@@ -681,16 +664,16 @@ function SceneSettings() {
             alert("Save the project first.");
             return;
           }
-          const rel = await importContentFile("image");
+          const rel = await importVideoAware("media");
           if (rel) updateActiveScene({ background: rel });
         }}
       >
-        Choose background image…
+        Choose background image or video…
       </button>
 
       {scene.background && !scene.background.startsWith('#') && (
         <>
-          <Row label="Image">
+          <Row label="Source">
             <input
               type="text"
               value={scene.background}
@@ -715,16 +698,12 @@ function SceneSettings() {
             style={{ ...chooseBtn, background: '#3f1d2b', borderColor: '#7f1d1d', color: '#fca5a5', marginTop: 8 }}
             onClick={() => updateActiveScene({ background: '#0f172a', backgroundSize: undefined })}
           >
-            ✕ Remove image
+            ✕ Remove background media
           </button>
         </>
       )}
 
-      <div style={{ color: "#7c8aa0", fontSize: 11, margin: "14px 2px 4px" }}>
-        Scene transition (entrance effect)
-      </div>
-
-      <Row label="Type">
+      <Row label="Scene Transition (On Entrance)">
         <select
           value={scene.transition?.type ?? "none"}
           onChange={(e) => {
@@ -788,7 +767,7 @@ function SceneSettings() {
           )}
 
           {(scene.transition.type === "fade" || scene.transition.type === "zoom") && (
-            <Row label="Elements only">
+            <CheckRow label="Elements only">
               <input
                 type="checkbox"
                 checked={scene.transition.elementsOnly ?? false}
@@ -799,7 +778,7 @@ function SceneSettings() {
                 }
                 title="Transition only the elements, not the background"
               />
-            </Row>
+            </CheckRow>
           )}
         </>
       )}
@@ -824,10 +803,10 @@ function MultiLayerProperties({ elements }: { elements: Element[] }) {
     <div style={panel}>
       <div style={heading}>Multi-Layer Properties ({elements.length})</div>
 
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Layer Lock
       </div>
-      <Row label="Locked">
+      <CheckRow label="Locked">
         <input
           type="checkbox"
           checked={commonLocked && (firstEl.locked ?? false)}
@@ -835,7 +814,7 @@ function MultiLayerProperties({ elements }: { elements: Element[] }) {
             elements.forEach(el => updateElement(el.id, { locked: e.target.checked }));
           }}
         />
-      </Row>
+      </CheckRow>
       <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
         {commonLocked ? "All layers have the same lock state" : "Mixed lock states"}
       </div>
@@ -859,7 +838,7 @@ function LayerFields({ el }: { el: Element }) {
 
   return (
     <>
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#7185b4", fontSize: 14, fontWeight: 500, letterSpacing: 0.3, margin: "12px 2px 6px" }}>
         Tint Overlay
       </div>
       <Row label="Color">
@@ -880,7 +859,7 @@ function LayerFields({ el }: { el: Element }) {
         </span>
       </Row>
 
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#7185b4", fontSize: 14, fontWeight: 500, letterSpacing: 0.3, margin: "12px 2px 6px" }}>
         Mask
       </div>
       {hasMask && (
@@ -911,16 +890,16 @@ function LayerFields({ el }: { el: Element }) {
         </button>
       )}
 
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#7185b4", fontSize: 14, fontWeight: 500, letterSpacing: 0.3, margin: "12px 2px 6px" }}>
         Layer Lock
       </div>
-      <Row label="Locked">
+      <CheckRow label="Locked">
         <input
           type="checkbox"
           checked={el.locked ?? false}
           onChange={(e) => updateElement(el.id, { locked: e.target.checked })}
         />
-      </Row>
+      </CheckRow>
       <div style={{ color: "#64748b", fontSize: 11, margin: "2px 4px 6px" }}>
         When locked, layer and children cannot be selected or edited on canvas.
       </div>
@@ -976,10 +955,10 @@ function CollectionFields({
         </select>
       </Row>
       {layout === "grid" && (
-        <Row label="Columns"><Num value={n(p.columns, 3)} onChange={(v) => set("columns", Number(v))} /></Row>
-      )}
-      {(layout === "grid") && (
-        <Row label="Gap"><Num value={n(p.gap, 16)} onChange={(v) => set("gap", Number(v))} /></Row>
+        <div style={{ display: "flex", gap: 8, margin: "6px 0" }}>
+          <Row label="Columns" style={{ flex: 1, margin: 0 }}><Num value={n(p.columns, 3)} onChange={(v) => set("columns", Number(v))} /></Row>
+          <Row label="Gap" style={{ flex: 1, margin: 0 }}><Num value={n(p.gap, 16)} onChange={(v) => set("gap", Number(v))} /></Row>
+        </div>
       )}
       {layout === "kenburns" && (
         <Row label="Interval (ms)"><Num value={n(p.intervalMs, 4000)} onChange={(v) => set("intervalMs", Number(v))} /></Row>
@@ -1000,18 +979,18 @@ function CollectionFields({
         </span>
       </Row>
 
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Video Settings
       </div>
       {layout === "grid" && (
-        <Row label="Show controls">
+        <CheckRow label="Show controls">
           <input type="checkbox" checked={bool(p.showControls, false)} onChange={(e) => set("showControls", e.target.checked)} />
-        </Row>
+        </CheckRow>
       )}
-      <Row label="Video muted">
+      <CheckRow label="Video muted">
         <input type="checkbox" checked={bool(p.videoMuted, true)} onChange={(e) => set("videoMuted", e.target.checked)} />
-      </Row>
-      <Row label="Video loop">
+      </CheckRow>
+      <CheckRow label="Video loop">
         <input
           type="checkbox"
           checked={bool(p.videoLoop, true)}
@@ -1022,8 +1001,8 @@ function CollectionFields({
             }
           }}
         />
-      </Row>
-      <Row label="Advance on end">
+      </CheckRow>
+      <CheckRow label="Advance on end">
         <input
           type="checkbox"
           checked={bool(p.advanceOnVideoEnd, false)}
@@ -1034,12 +1013,12 @@ function CollectionFields({
             }
           }}
         />
-      </Row>
+      </CheckRow>
       {bool(p.advanceOnVideoEnd, false) && (
         <Row label="Delay (ms)"><Num value={n(p.advanceDelayMs, 0)} onChange={(v) => set("advanceDelayMs", Number(v))} /></Row>
       )}
 
-      <div style={{ color: "#7c8aa0", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
+      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, margin: "12px 2px 6px" }}>
         Items ({list.length})
       </div>
       <button style={chooseBtn} onClick={addItem}>＋ Add item</button>
@@ -1059,7 +1038,7 @@ function CollectionFields({
             <button
               style={{ ...miniBtn, border: "1px solid #2563eb", color: "#e0f2fe" }}
               onClick={async () => {
-                const rel = await importContentFile("media");
+                const rel = await importVideoAware("media");
                 if (rel) patchItem(it.id, { image: rel });
               }}
               title="Choose focused image or video"
@@ -1147,14 +1126,6 @@ function BindControl({ elementId, targetProp }: { elementId: string; targetProp:
 }
 
 // --- field primitives ---
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "3px 0" }}>
-      <span style={{ width: 64, color: "#94a3b8", fontSize: 12 }}>{label}</span>
-      <span style={{ flex: 1 }}>{children}</span>
-    </label>
-  );
-}
 function Num({ value, onChange }: { value: number; onChange: (v: string) => void }) {
   return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} style={input} />;
 }
@@ -1189,7 +1160,7 @@ const panel: React.CSSProperties = {
   overflowY: "auto",
 };
 const heading: React.CSSProperties = {
-  color: "#94a3b8",
+  color: "#7185b4",
   fontSize: 11,
   textTransform: "uppercase",
   letterSpacing: 0.5,

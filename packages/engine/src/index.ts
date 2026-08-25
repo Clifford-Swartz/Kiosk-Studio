@@ -9,9 +9,16 @@ export {
   createProject,
   newId,
 } from "./model/factory.js";
+export { mapActions, filterActions, removeActionById, flattenActions } from "./model/actionTree.js";
+export {
+  richTextToPlainString,
+  plainTextToRichTextDoc,
+  legacyRunsToRichTextDoc,
+} from "./model/richText.js";
+export type { RichTextSpan, RichTextParagraph, RichTextDoc, LegacyTextRun } from "./model/richText.js";
 
 // Rendering: shared primitives used by Player and Editor.
-export { ElementRenderer, resolveSrc } from "./render/ElementRenderer.js";
+export { ElementRenderer, resolveSrc, isVideoSrc, TEXT_LINE_HEIGHT } from "./render/ElementRenderer.js";
 export type { ElementRendererProps } from "./render/ElementRenderer.js";
 export { Player } from "./render/Player.js";
 export type { PlayerProps } from "./render/Player.js";
@@ -26,15 +33,25 @@ export type { KioskEvent, EventKind, EventListener, Unsubscribe } from "./events
 
 // Analytics: event buffering and export (CSV, JSON, REST, console).
 export { analyticsStore } from "./analytics/AnalyticsStore.js";
+export type { SinkStatus } from "./analytics/AnalyticsStore.js";
 
 // Element resolution: unified bindings + overrides pipeline.
 export { elementResolver, bindingHost, overrideHost } from "./data/ElementResolver.js";
 export type { ElementResolver, BindingHost, OverrideHost } from "./data/ElementResolver.js";
 
-// DEPRECATED: Use elementResolver instead (consolidated interface).
-// These will be removed in a future version.
-export { bindingContext } from "./data/BindingContext.js";
-export type { BindingContext } from "./data/BindingContext.js";
-export { overrideStore, OverrideStore } from "./runtime/overrideStore.js";
-export { applyOverrides } from "./runtime/applyOverrides.js";
-export { useOverrides } from "./runtime/useOverrides.js";
+// Element tree: single walk/find/flatten implementation for layer/collection nesting.
+export {
+  NESTABLE_TYPES,
+  canHaveChildren,
+  flattenElements,
+  findElement,
+  findElementAbsolute,
+  findParent,
+  findNearestLayerId,
+  isDescendant,
+  isLockedOrChildOfLocked,
+  walkElementTree,
+  collectElements,
+  patchElement,
+} from "./data/elementTree.js";
+export type { FlattenOptions } from "./data/elementTree.js";

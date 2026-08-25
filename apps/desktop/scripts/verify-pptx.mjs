@@ -19,7 +19,7 @@ delete process.env.ELECTRON_RUN_AS_NODE;
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const DECK = "C:/Users/C19257/Documents/BI Team Weekly 22-May-26.pptx";
+const DECK = "C:/Users/c81210/Downloads/TS1800 Data Center Demo Definition - Sharable .pptx";
 
 // 1. Parse the deck standalone (bundle the TS parser).
 await build({
@@ -27,20 +27,12 @@ await build({
   bundle: true, format: "esm", platform: "node",
   outfile: join(tmpdir(), "pptx-verify-bundle.mjs"), logLevel: "error",
 });
-const { parsePptx } = await import(pathToFileURL(join(tmpdir(), "pptx-verify-bundle.mjs")).href);
+const { parsePptx, toWireDeck } = await import(pathToFileURL(join(tmpdir(), "pptx-verify-bundle.mjs")).href);
 const parsed = parsePptx(new Uint8Array(readFileSync(DECK)));
 
-// Shape it like the renderer's ParsedDeck (images as base64).
-const deck = {
-  slideW: parsed.slideW, slideH: parsed.slideH,
-  slides: parsed.slides.map((s) => ({
-    texts: s.texts,
-    images: s.images.map((im) => ({
-      x: im.x, y: im.y, width: im.width, height: im.height, ext: im.ext,
-      base64: Buffer.from(im.bytes).toString("base64"),
-    })),
-  })),
-};
+// Same wire shape (images as base64) the main-process pptx:import handler
+// produces — reuse it rather than re-deriving the mapping here.
+const deck = toWireDeck(parsed);
 
 // 2. Launch the built app with an isolated profile.
 const app = await electron.launch({

@@ -1,9 +1,22 @@
-import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { resolveSrc, Player, type Element } from "@kiosk/engine";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  resolveSrc,
+  isVideoSrc,
+  Player,
+  flattenElements,
+  findElementAbsolute,
+  findNearestLayerId,
+  isLockedOrChildOfLocked,
+  collectElements,
+  isDescendant,
+  type Element,
+} from "@kiosk/engine";
 import { useEditor } from "./store.js";
 import { importImageBlob, useProjectAssetBase, importImageFromPath } from "./assets.js";
 import { collectTargets, snapMove, snapResize, snapRotation, type GuideLine, type SnapTargets } from "./snap.js";
 import { MaskOverlay } from "./MaskOverlay.js";
+import { RichTextEditor } from "./richText/RichTextEditor.js";
+import type { RichTextDoc } from "@kiosk/engine";
 
 /** On-screen snap threshold in px; converted to scene units via the scale. */
 const SNAP_PX = 8;
@@ -81,93 +94,6 @@ function textPropFor(type: string): "text" | "label" {
   return type === "button" ? "label" : "text";
 }
 
-/**
- * Recursively flatten all elements including children of layers.
- * Converts child coordinates from relative to absolute by accumulating parent offsets.
- */
-function flattenElements(elements: Element[], parentX = 0, parentY = 0): Element[] {
-  const result: Element[] = [];
-  for (const el of elements) {
-    if (el.type !== "layer") {
-      // Non-layer elements: add with absolute coordinates
-      result.push({
-        ...el,
-        x: el.x + parentX,
-        y: el.y + parentY,
-      });
-    }
-    if (el.children) {
-      // Layer elements: recurse with accumulated offset
-      const offsetX = el.type === "layer" ? el.x : 0;
-      const offsetY = el.type === "layer" ? el.y : 0;
-      result.push(...flattenElements(el.children, parentX + offsetX, parentY + offsetY));
-    }
-  }
-  return result;
-}
-
-/**
- * Find an element by ID, searching recursively through nested children.
- * Returns the element with absolute coordinates if it's nested in a layer.
- */
-function findElementRecursive(elements: Element[], id: string, parentX = 0, parentY = 0): Element | null {
-  for (const el of elements) {
-    if (el.id === id) {
-      // Found it - return with absolute coordinates if nested
-      return el.type === "layer" ? el : {
-        ...el,
-        x: el.x + parentX,
-        y: el.y + parentY,
-      };
-    }
-    if (el.children) {
-      const offsetX = el.type === "layer" ? el.x : 0;
-      const offsetY = el.type === "layer" ? el.y : 0;
-      const found = findElementRecursive(el.children, id, parentX + offsetX, parentY + offsetY);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/**
- * Check if element OR its parent layer is locked.
- * Locked elements/layers cannot be selected or edited.
- */
-function isLockedOrChildOfLocked(elements: Element[], id: string): boolean {
-  for (const el of elements) {
-    if (el.id === id) {
-      // Direct match - check if locked
-      return el.locked ?? false;
-    }
-    if ((el.type === "layer" || el.type === "collection") && el.children) {
-      // Check children recursively
-      const found = isLockedOrChildOfLocked(el.children, id);
-      if (found) {
-        // Child is locked, OR parent container is locked
-        return true;
-      }
-      // Check if this parent is locked and contains the child
-      if (el.locked && el.children.some(c => c.id === id || hasDescendant(c, id))) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * Check if element has a descendant with given ID (recursive).
- */
-function hasDescendant(el: Element, id: string): boolean {
-  if (!el.children) return false;
-  for (const child of el.children) {
-    if (child.id === id) return true;
-    if (hasDescendant(child, id)) return true;
-  }
-  return false;
-}
-
 export function Canvas({
   pauseCapture,
   resumeCapture
@@ -188,6 +114,7 @@ export function Canvas({
   const exitTextEditing = useEditor((s) => s.exitTextEditing);
   const updateProps = useEditor((s) => s.updateElementProps);
   const addImageElement = useEditor((s) => s.addImageElement);
+  const setVideoIncompatibility = useEditor((s) => s.setVideoIncompatibility);
   const filePath = useEditor((s) => s.filePath);
   const assetBaseUrl = useProjectAssetBase(filePath);
   // Canvas size is project-wide (one size for all scenes).
@@ -205,6 +132,9 @@ export function Canvas({
   const [, forceUpdate] = useState({});
   // Tracks the previous pointer-down for manual double-click detection.
   const lastDown = useRef<{ id: string; t: number } | null>(null);
+  // Viewport point of the double-click that opened text editing, so the
+  // caret can be seeked there instead of selecting everything on entry.
+  const textEditSeekPoint = useRef<{ x: number; y: number } | null>(null);
   // Snap targets computed once at drag start; whether Alt is held (overrides snap).
   const dragTargets = useRef<SnapTargets | null>(null);
   const altHeld = useRef(false);
@@ -289,10 +219,33 @@ export function Canvas({
     return () => host.removeEventListener("wheel", handleWheel);
   }, [setUserZoom, setPan]);
 
-  const selected = selectedId ? findElementRecursive(scene.elements, selectedId) : null;
-  const hoveredEl = hoveredElementId ? findElementRecursive(scene.elements, hoveredElementId) : null;
-  const editingEl = editingId ? findElementRecursive(scene.elements, editingId) : null;
-  const maskEditingEl = maskEditingId ? findElementRecursive(scene.elements, maskEditingId) : null;
+  const selected = selectedId ? findElementAbsolute(scene.elements, selectedId) : null;
+  const hoveredEl = hoveredElementId ? findElementAbsolute(scene.elements, hoveredElementId) : null;
+  const editingEl = editingId ? findElementAbsolute(scene.elements, editingId) : null;
+  const maskEditingEl = maskEditingId ? findElementAbsolute(scene.elements, maskEditingId) : null;
+
+  // Which layer editor-dimming of invisible elements is scoped to (see
+  // ElementRenderer's editorDim): the selection's own layer, falling back to
+  // the first multi-selected element when there's no single selection.
+  const activeSelectionId = selectedId ?? selectedIds.values().next().value ?? null;
+  const activeLayerId = activeSelectionId ? findNearestLayerId(scene.elements, activeSelectionId) : null;
+
+  // Invisible "layer" elements dim only when the selection is the layer
+  // itself or something inside it (containment), not "same level as the
+  // layer" (activeLayerId's sibling-match semantics) — a layer's opacity
+  // cascades to every descendant via CSS, so treating it like a sibling leaf
+  // would dim it whenever an unrelated sibling is picked, and keep it hidden
+  // while its own contents are selected. See ElementRenderer's editorDim.
+  const dimmableLayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!activeSelectionId) return ids;
+    for (const el of collectElements(scene.elements, (e) => e.type === "layer")) {
+      if (el.id === activeSelectionId || isDescendant(scene.elements, el.id, activeSelectionId)) {
+        ids.add(el.id);
+      }
+    }
+    return ids;
+  }, [scene.elements, activeSelectionId]);
 
   // Paste (Ctrl+V) an image from the clipboard -> add as an image element.
   useEffect(() => {
@@ -334,6 +287,32 @@ export function Canvas({
     }
 
     if (rel) addImageElement(rel, pos);
+  }
+
+  /**
+   * Fired by the embedded Player when a video already in the project fails to
+   * decode at runtime (pre-existing asset, drag-dropped file, hand-edited
+   * JSON). Re-probes to get codec names for the modal, then offers the same
+   * re-encode/import-anyway/cancel choice as import-time detection; on
+   * re-encode, patches the element's src to the new file.
+   */
+  async function onVideoIncompatible(elementId: string, src: string) {
+    if (!isVideoSrc(src)) return;
+    const probe = await window.kiosk.probeVideo(filePath, src);
+    if (probe.supported !== false) return;
+
+    const fileName = src.split(/[/\\]/).pop() ?? src;
+    setVideoIncompatibility({
+      fileName,
+      relativePath: src,
+      projectPath: filePath,
+      videoCodec: probe.videoCodec,
+      audioCodec: probe.audioCodec,
+      reason: probe.reason,
+      resolve: (newPath) => {
+        if (newPath && newPath !== src) updateProps(elementId, { src: newPath });
+      },
+    });
   }
 
   // Keep scale in a ref so the (stable) drag handlers always read the current
@@ -436,7 +415,8 @@ export function Canvas({
 
           // Find all elements overlapping marquee (using flattened list for absolute coords)
           const scene = st.activeScene();
-          const overlapping = flattenElements(scene.elements)
+          const overlapping = flattenElements(scene.elements, { absoluteCoords: true })
+            .filter((el) => el.type !== "layer")
             .filter((el) => !isLockedOrChildOfLocked(scene.elements, el.id))
             .filter((el) => {
               // Check bounding box overlap (ignoring rotation for simplicity)
@@ -458,10 +438,10 @@ export function Canvas({
       drag.current = null;
       dragTargets.current = null;
       setGuides([]);
+    } finally {
+      // ALWAYS clean up listeners and resume capture, even if exception occurs above
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", endDrag);
-    } finally {
-      // ALWAYS resume capture, even if exception occurs above
       resumeCapture(); // Resume history tracking and capture final position
     }
   }).current;
@@ -498,7 +478,7 @@ export function Canvas({
       pauseCapture();
       const elements = Array.from(selectedIds)
         .map((id) => {
-          const elem = findElementRecursive(scene.elements, id);
+          const elem = findElementAbsolute(scene.elements, id);
           return elem ? { id, startX: elem.x, startY: elem.y } : null;
         })
         .filter((e): e is { id: string; startX: number; startY: number } => e !== null);
@@ -571,8 +551,9 @@ export function Canvas({
     window.addEventListener("pointerup", endDrag);
   }
 
-  function beginTextEdit(el: Element) {
+  function beginTextEdit(el: Element, seekPoint?: { x: number; y: number }) {
     if (!TEXT_EDITABLE.has(el.type)) return;
+    textEditSeekPoint.current = seekPoint ?? null;
     startTextEditing(el.id);
   }
 
@@ -633,12 +614,17 @@ export function Canvas({
           transformOrigin: "center center",
           ...((!scene.background || scene.background.startsWith('#'))
             ? { background: scene.background }
-            : {
-                backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
-                backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
-                backgroundPosition: scene.backgroundPosition || 'center',
-                backgroundRepeat: 'no-repeat',
-              }),
+            : isVideoSrc(scene.background)
+              // The real video is rendered by the embedded <Player> below,
+              // which fully covers this div — CSS can't autoplay a video via
+              // background-image, so this is just a color fallback.
+              ? { background: "#000000" }
+              : {
+                  backgroundImage: `url(${resolveSrc(scene.background, assetBaseUrl)})`,
+                  backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
+                  backgroundPosition: scene.backgroundPosition || 'center',
+                  backgroundRepeat: 'no-repeat',
+                }),
           boxShadow: "0 0 0 1px #2a3441, 0 20px 60px rgba(0,0,0,0.5)",
           flexShrink: 0,
         }}
@@ -667,6 +653,9 @@ export function Canvas({
             assetBaseUrl={assetBaseUrl}
             live={true}
             editorMode={true}
+            activeLayerId={activeLayerId}
+            dimmableLayerIds={dimmableLayerIds}
+            onIncompatible={onVideoIncompatible}
           />
         </div>
 
@@ -674,12 +663,16 @@ export function Canvas({
             rect, so a click hits the element actually under the cursor (not the
             topmost full-stage wrapper). zIndex mirrors draw order.
             Layers are excluded (not selectable on canvas), but their children are included. */}
-        {flattenElements(scene.elements).map((el) => (
+        {flattenElements(scene.elements, { absoluteCoords: true })
+          .filter((el) => el.type !== "layer")
+          .map((el) => (
           <div
             key={`hit-${el.id}`}
             onPointerDown={(e) => {
               // Right-click should not interact with elements (used for pan)
               if (e.button === 2) return;
+              // Clear any stuck text-editing state before selecting/moving
+              exitTextEditing();
 
               const now = Date.now();
               const last = lastDown.current;
@@ -689,7 +682,7 @@ export function Canvas({
               if (last && last.id === el.id && now - last.t < 350) {
                 e.stopPropagation();
                 lastDown.current = null;
-                beginTextEdit(el);
+                beginTextEdit(el, { x: e.clientX, y: e.clientY });
                 return;
               }
               beginMove(e, el);
@@ -704,20 +697,42 @@ export function Canvas({
               transformOrigin: "center center",
               // Selected element gets mechanical priority (999999) to match visual priority
               zIndex: selectedId === el.id ? 999999 : el.zIndex,
-              // Hidden hit target only while editing (inline editor needs clicks)
-              // Selected elements keep active hit target for drag
-              pointerEvents: editingId === el.id ? "none" : "auto",
+              // Locked elements (or elements nested under a locked layer) and
+              // elements being text-edited get no pointer events, so clicks
+              // fall through to the selectable element underneath.
+              pointerEvents:
+                editingId === el.id || isLockedOrChildOfLocked(scene.elements, el.id) ? "none" : "auto",
               cursor: "move",
             }}
           />
         ))}
 
-        {editingEl && (
+        {editingEl && editingEl.type === "text" && (
+          <RichTextEditor
+            element={editingEl}
+            scale={finalScale}
+            seekPoint={textEditSeekPoint.current}
+            onCommit={(patch: { content: RichTextDoc; text: string }) => {
+              // Clear modal state first so updateElementProps isn't blocked
+              // by isModalEditingActive() (same pattern as MaskOverlay).
+              exitTextEditing();
+              updateProps(editingEl.id, patch);
+            }}
+            pauseCapture={pauseCapture}
+            resumeCapture={resumeCapture}
+          />
+        )}
+
+        {editingEl && editingEl.type !== "text" && (
           <InlineTextEditor
             element={editingEl}
             scale={finalScale}
-            onChange={(v) => updateProps(editingEl.id, { [textPropFor(editingEl.type)]: v })}
-            onDone={() => exitTextEditing()}
+            onCommit={(v) => {
+              exitTextEditing();
+              updateProps(editingEl.id, { [textPropFor(editingEl.type)]: v });
+            }}
+            pauseCapture={pauseCapture}
+            resumeCapture={resumeCapture}
           />
         )}
 
@@ -738,7 +753,7 @@ export function Canvas({
         {/* Multi-select overlays (no handles, just outline) */}
         {selectedIds.size > 0 && !editingEl && !maskEditingEl &&
           Array.from(selectedIds).map((id) => {
-            const el = findElementRecursive(scene.elements, id);
+            const el = findElementAbsolute(scene.elements, id);
             if (!el) return null;
             return (
               <div
@@ -854,13 +869,15 @@ export function Canvas({
 function InlineTextEditor({
   element,
   scale,
-  onChange,
-  onDone,
+  onCommit,
+  pauseCapture,
+  resumeCapture,
 }: {
   element: Element;
   scale: number;
-  onChange: (value: string) => void;
-  onDone: () => void;
+  onCommit: (value: string) => void;
+  pauseCapture: () => void;
+  resumeCapture: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const prop = textPropFor(element.type);
@@ -870,9 +887,18 @@ function InlineTextEditor({
   // pointer events steal focus). Ignore blur until the field has truly settled.
   const ready = useRef(false);
 
+  // A whole edit session (however many keystrokes) is one undo entry — same
+  // pattern as MaskOverlay/RichTextEditor.
+  useEffect(() => {
+    pauseCapture();
+    return () => resumeCapture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Set initial text, then focus + select-all after the opening click settles.
   // We do NOT rebind value into the DOM on later renders — that resets the
-  // caret. The store stays in sync via onInput; the DOM is the editing surface.
+  // caret. The DOM is the editing surface; the store only hears about it once,
+  // on commit (see commit() below).
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -892,6 +918,10 @@ function InlineTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const commit = () => {
+    if (ready.current) onCommit(ref.current?.textContent ?? "");
+  };
+
   return (
     <div
       ref={ref}
@@ -901,15 +931,11 @@ function InlineTextEditor({
       // Stop these from bubbling to the canvas background (which would close
       // editing) so you can click within the text to place the caret.
       onPointerDown={(e) => e.stopPropagation()}
-      onInput={(e) => onChange(e.currentTarget.textContent ?? "")}
-      onBlur={() => {
-        // Only commit on blur once the field has actually held focus.
-        if (ready.current) onDone();
-      }}
+      onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
-          onDone();
+          commit();
         }
       }}
       style={{

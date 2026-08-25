@@ -1,5 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+/** Mirrors MediaProbeResult in ../main/mediaSupport.ts — kept separate so this
+ * file (type-checked from both the node and web tsconfigs) doesn't reach into
+ * main/'s ambient module declarations, which the web tsconfig doesn't include. */
+interface MediaProbeResult {
+  videoCodec: string | null;
+  audioCodec: string | null;
+  durationSec: number | null;
+  supported: boolean | null;
+  reason?: string;
+}
+
 /**
  * The single, typed bridge between the sandboxed renderer and the Node main
  * process. Every privileged capability (file access, connectors later) is
@@ -53,7 +64,27 @@ const api = {
    */
   copyExternalFile: (externalPath: string): Promise<string> =>
     ipcRenderer.invoke("content:copyExternal", externalPath),
-  /** Show a .pptx open dialog + parse it; resolves to a ParsedDeck or null. */
+  /**
+   * Probe a project-relative video's codecs to detect whether Chromium's
+   * <video> element can decode it. `projectPath` may be null for an unsaved
+   * project (only "user-content/" paths resolve then).
+   */
+  probeVideo: (projectPath: string | null, relativePath: string): Promise<MediaProbeResult> =>
+    ipcRenderer.invoke("media:probe", projectPath, relativePath),
+  /**
+   * Re-encode a project-relative video to H.264/AAC mp4. Progress arrives via
+   * onEvent as { kind: "encodeProgress", payload: { relativePath, percent } }.
+   * Resolves to the new relative path.
+   */
+  reencodeVideo: (projectPath: string | null, relativePath: string): Promise<string> =>
+    ipcRenderer.invoke("media:reencode", projectPath, relativePath),
+  /**
+   * Show a .pptx open dialog + parse it; resolves to a ParsedDeckWire or
+   * null (canceled, or the parse failed — main already showed an error
+   * dialog in that case). Typed `unknown` here because IPC gives no runtime
+   * guarantee the main process actually returned this shape — validate with
+   * `isParsedDeckWire` from @kiosk/pptx before use.
+   */
   importPptx: (): Promise<unknown | null> => ipcRenderer.invoke("pptx:import"),
 
   // --- live data ---
@@ -89,6 +120,15 @@ const api = {
   /** Write analytics data to file (CSV/JSON/JSONL). */
   writeAnalytics: (path: string, data: string, append: boolean): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke("analytics:write", path, data, append),
+
+  // --- AI chat ---
+  /** Forward a chat-completions request (messages + tool defs) to the main-process OpenAI proxy. */
+  sendChat: (messages: unknown[], tools: unknown[]): Promise<unknown> =>
+    ipcRenderer.invoke("ai:chat", messages, tools),
+  /** Whether an API key is currently configured (never returns the raw key). */
+  hasAiKey: (): Promise<boolean> => ipcRenderer.invoke("ai:getKey"),
+  /** Save the OpenAI API key (stored via electron-store in the main process). */
+  setAiKey: (key: string): Promise<void> => ipcRenderer.invoke("ai:setKey", key),
 };
 
 export type KioskApi = typeof api;

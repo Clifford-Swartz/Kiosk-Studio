@@ -7,11 +7,12 @@ const TYPE_ICON: Record<string, string> = {
   image: "🖼",
   video: "▶",
   button: "⬭",
-  layer: "◫",
+  html: "</>",
 };
 
 /**
- * 16x16 SVG icon showing element type + visual properties.
+ * 16x16 SVG icon showing element type + visual properties. Only rendered for
+ * actual elements (not layers — layers are containers, not visuals).
  * Rectangle → tiny rect with actual fill color
  * Text → "T" with actual text color
  * Video → ▶ with color hint
@@ -53,13 +54,6 @@ function SmartThumbnail({ element }: { element: { type: string; props: Record<st
         </svg>
       );
 
-    case "layer":
-      return (
-        <svg width="16" height="16" viewBox="0 0 16 16">
-          <rect x="2" y="2" width="12" height="12" fill="none" stroke="#64748b" strokeWidth="1.5" />
-        </svg>
-      );
-
     default:
       return <span style={{ fontSize: 14, opacity: 0.8 }}>{TYPE_ICON[element.type] ?? "•"}</span>;
   }
@@ -77,20 +71,30 @@ function SmartThumbnail({ element }: { element: { type: string; props: Record<st
  * order (index = draw order, low = back), so we convert between the two.
  */
 interface TreeNode {
-  element: { id: string; type: string; name?: string; zIndex: number; opacity: number; props: Record<string, unknown>; locked?: boolean; children?: TreeNode['element'][] };
+  element: { id: string; type: string; name?: string; zIndex: number; opacity: number; props: Record<string, unknown>; locked?: boolean; visible?: boolean; children?: TreeNode['element'][] };
   depth: number;
   arrayIndex: number;
+  // Id of the container this element's array lives in (null = scene root). Two
+  // rows can share the same arrayIndex if they belong to different containers
+  // (e.g. a root element and a layer's child can both be index 0), so drag
+  // targeting must key off element id + parentId, never arrayIndex alone.
+  parentId: string | null;
 }
 
-function buildTree(elements: TreeNode['element'][], collapsedIds: Set<string>, depth = 0): TreeNode[] {
+function buildTree(
+  elements: TreeNode['element'][],
+  collapsedIds: Set<string>,
+  depth = 0,
+  parentId: string | null = null
+): TreeNode[] {
   const nodes: TreeNode[] = [];
   // Iterate in reverse order to display top-most elements first
   for (let i = elements.length - 1; i >= 0; i--) {
     const el = elements[i];
-    nodes.push({ element: el, depth, arrayIndex: i });
+    nodes.push({ element: el, depth, arrayIndex: i, parentId });
     // If element has children and is not collapsed, recurse
     if (el.children && !collapsedIds.has(el.id)) {
-      const childNodes = buildTree(el.children, collapsedIds, depth + 1);
+      const childNodes = buildTree(el.children, collapsedIds, depth + 1, el.id);
       nodes.push(...childNodes);
     }
   }
@@ -116,15 +120,25 @@ export function SceneStructure() {
   // This is now handled by iterating in reverse order within buildTree.
   const rows = buildTree(scene.elements, collapsedElementIds);
 
-  // Drag state: the array index being dragged, and the array index hovered over.
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [overIdx, setOverIdx] = useState<number | null>(null);
+  // Drag state, keyed by element id (not array index — index is only unique
+  // within a single container, and two rows in different containers can
+  // share the same arrayIndex).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   // Reparenting mode: when hovering over middle of a layer row (not edge)
   const [reparentTargetId, setReparentTargetId] = useState<string | null>(null);
 
-  // Click-and-hold drag detection
-  const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isDraggableRef = useRef(false);
+  // Click-and-hold drag detection. holdReadyId is state (not a ref) so that
+  // flipping it after the hold delay actually re-renders the row with
+  // draggable=true — a ref alone never triggers React to update the DOM
+  // attribute, which was silently preventing native drag from ever starting.
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [holdReadyId, setHoldReadyId] = useState<string | null>(null);
+  // Only true once a real HTML5 drag has started; used to swallow the click
+  // that follows a drop. Distinct from holdReadyId so that a deliberate slow
+  // click (held past the hold delay but never moved) still registers as a
+  // normal click instead of being eaten.
+  const didDragRef = useRef(false);
 
   // Inline rename state.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -147,19 +161,22 @@ export function SceneStructure() {
     setEditingId(null);
   }
 
+  function resetDragState() {
+    setDragId(null);
+    setOverId(null);
+    setReparentTargetId(null);
+    setHoldReadyId(null);
+  }
+
   function handleDrop() {
-    if (dragIdx === null) {
-      setDragIdx(null);
-      setOverIdx(null);
-      setReparentTargetId(null);
+    if (!dragId) {
+      resetDragState();
       return;
     }
 
-    const draggedNode = rows.find(n => n.arrayIndex === dragIdx);
+    const draggedNode = rows.find((n) => n.element.id === dragId);
     if (!draggedNode) {
-      setDragIdx(null);
-      setOverIdx(null);
-      setReparentTargetId(null);
+      resetDragState();
       return;
     }
 
@@ -170,14 +187,26 @@ export function SceneStructure() {
         alert(error); // Show validation error to user
       }
     }
-    // Reordering mode
-    else if (overIdx !== null && overIdx !== dragIdx) {
-      reorderElement(draggedNode.element.id, overIdx);
+    // Reordering mode — the target's container may differ from the dragged
+    // element's current container, in which case reparent first (into the
+    // target's own container, which may be scene root) then reorder into
+    // position within that container.
+    else if (overId && overId !== dragId) {
+      const targetNode = rows.find((n) => n.element.id === overId);
+      if (targetNode) {
+        if (targetNode.parentId !== draggedNode.parentId) {
+          const error = reparentElement(draggedNode.element.id, targetNode.parentId);
+          if (error) {
+            alert(error);
+            resetDragState();
+            return;
+          }
+        }
+        reorderElement(draggedNode.element.id, targetNode.arrayIndex);
+      }
     }
 
-    setDragIdx(null);
-    setOverIdx(null);
-    setReparentTargetId(null);
+    resetDragState();
   }
 
   return (
@@ -201,7 +230,7 @@ export function SceneStructure() {
         const isEditing = editingId === el.id;
         const canAcceptChildren = el.type === "layer" || el.type === "collection";
         const isReparentTarget = reparentTargetId === el.id;
-        const isReorderTarget = overIdx === i && dragIdx !== null && dragIdx !== i && !reparentTargetId;
+        const isReorderTarget = overId === el.id && dragId !== null && dragId !== el.id && !reparentTargetId;
         const hasChildren = el.children && el.children.length > 0;
         const isCollapsed = collapsedElementIds.has(el.id);
         const isLayer = el.type === "layer";
@@ -209,17 +238,32 @@ export function SceneStructure() {
         return (
           <div
             key={el.id}
-            draggable={isDraggableRef.current && !isEditing && !el.locked}
-            onDragStart={() => setDragIdx(i)}
+            draggable={holdReadyId === el.id && !isEditing && !el.locked}
+            onDragStart={() => {
+              didDragRef.current = true;
+              setDragId(el.id);
+            }}
             onDragEnd={() => {
-              setDragIdx(null);
-              setOverIdx(null);
-              isDraggableRef.current = false;
+              resetDragState();
             }}
             onDragOver={(e) => {
               e.preventDefault();
-              if (dragIdx === null || dragIdx === i) return;
+              if (dragId === null || dragId === el.id) return;
 
+              const draggedNode = rows.find((n) => n.element.id === dragId);
+              if (!draggedNode) {
+                setReparentTargetId(null);
+                setOverId(null);
+                return;
+              }
+
+              // Every row uses the same edge/middle split, regardless of
+              // whether the hovered row shares the dragged element's
+              // container: middle 50% of a container row reparents into it,
+              // top/bottom 25% (or any hover on a non-container row) yields
+              // a reorder target anchored to that row's own container and
+              // position — which may be a different container (or scene
+              // root) than the dragged element's current one.
               const rect = e.currentTarget.getBoundingClientRect();
               const y = e.clientY - rect.top;
               const height = rect.height;
@@ -228,15 +272,15 @@ export function SceneStructure() {
               // Middle 50% = reparent (only if element can accept children)
               if (canAcceptChildren && y > height * 0.25 && y < height * 0.75) {
                 setReparentTargetId(el.id);
-                setOverIdx(null);
+                setOverId(null);
               } else {
                 setReparentTargetId(null);
-                setOverIdx(i);
+                setOverId(el.id);
               }
             }}
             onDragLeave={() => {
               setReparentTargetId(null);
-              setOverIdx(null);
+              setOverId(null);
             }}
             onDrop={(e) => {
               e.preventDefault();
@@ -254,17 +298,22 @@ export function SceneStructure() {
                 target = target.parentElement as HTMLElement;
               }
 
+              didDragRef.current = false;
+
               // Start a 200ms timer to enable dragging
               holdTimerRef.current = setTimeout(() => {
-                isDraggableRef.current = true;
+                setHoldReadyId(el.id);
               }, 200);
             }}
             onMouseUp={() => {
-              // Clear the hold timer if released early
+              // Clear the hold timer if released early, and drop drag-readiness
+              // if no drag actually started (a deliberate slow click shouldn't
+              // get swallowed as a drag).
               if (holdTimerRef.current) {
                 clearTimeout(holdTimerRef.current);
                 holdTimerRef.current = null;
               }
+              if (!didDragRef.current) setHoldReadyId(null);
             }}
             onMouseLeave={() => {
               // Clear the hold timer if mouse leaves
@@ -272,11 +321,12 @@ export function SceneStructure() {
                 clearTimeout(holdTimerRef.current);
                 holdTimerRef.current = null;
               }
+              if (!didDragRef.current) setHoldReadyId(null);
             }}
             onClick={(e) => {
               // Only handle click if we didn't start a drag
-              if (isDraggableRef.current) {
-                isDraggableRef.current = false;
+              if (didDragRef.current) {
+                didDragRef.current = false;
                 return;
               }
 
@@ -313,8 +363,8 @@ export function SceneStructure() {
               ...(isSel ? rowSelected : null),
               ...(isReorderTarget ? rowDropTarget : null),
               ...(isReparentTarget ? rowReparentTarget : null),
-              opacity: dragIdx === i ? 0.4 : 1,
-              paddingLeft: 2 + depth * 16,
+              opacity: dragId === el.id ? 0.4 : 1,
+              paddingLeft: 2 + depth * 8,
               cursor: "pointer",
             }}
           >
@@ -332,9 +382,11 @@ export function SceneStructure() {
             ) : (
               <span style={{ width: 14 }} />
             )}
-            <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <SmartThumbnail element={el} />
-            </span>
+            {!isLayer && (
+              <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <SmartThumbnail element={el} />
+              </span>
+            )}
             {isEditing ? (
               <input
                 ref={inputRef}
@@ -379,10 +431,10 @@ export function SceneStructure() {
               style={iconBtn}
               onClick={(e) => {
                 e.stopPropagation();
-                updateElement(el.id, { opacity: el.opacity === 0 ? 1 : 0 });
+                updateElement(el.id, { visible: !(el.visible ?? true) });
               }}
             >
-              {el.opacity === 0 ? "🚫" : "👁"}
+              {el.visible === false ? "🚫" : "👁"}
             </button>
             <button
               title="Bring forward"
@@ -438,6 +490,11 @@ const row: CSSProperties = {
   color: "#cbd5e1",
   fontSize: 13,
   cursor: "pointer",
+  // Text selection fights with click-and-hold drag detection — a mousedown +
+  // small mouse movement before the hold delay elapses would otherwise start
+  // highlighting the label instead of letting the row become draggable.
+  userSelect: "none",
+  WebkitUserSelect: "none",
 };
 const rowSelected: CSSProperties = {
   background: "#1e3a52",

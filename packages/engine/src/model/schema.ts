@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  legacyRunsToRichTextDoc,
+  plainTextToRichTextDoc,
+  type LegacyTextRun,
+} from "./richText.js";
 
 /**
  * The Scene Model — THE contract of Kiosk Studio.
@@ -25,6 +30,9 @@ export const ElementTypeSchema = z.enum([
   "button",
   "layer",
   "collection",
+  "table",
+  "line",
+  "html",
 ]);
 
 export const TriggerKindSchema = z.enum([
@@ -48,8 +56,10 @@ export const ActionTypeSchema = z.enum([
   "setState",
   "togglePlayPause",
   "seekVideo",
+  "scrubVideo",
   "setVolume",
   "setSpeed",
+  "parallel",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -64,6 +74,7 @@ export const EventKindSchema = z.enum([
   "sessionEnd",
   "sceneEnter",
   "sceneExit",
+  "stateExit",
   "elementTap",
   "elementHover",
   "elementPress",
@@ -202,7 +213,23 @@ export const TransitionSchema = z.object({
 // Interactions & bindings
 // ---------------------------------------------------------------------------
 
+/** Short unique id. Duplicated from factory.ts's newId (not imported: factory.ts
+ * derives from types.ts, which derives from this file, so importing it back
+ * would cycle). */
+function genActionId(): string {
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `act-${rand}`;
+}
+
+/**
+ * A "parallel" action nests a batch of actions in `params.actions` that run
+ * concurrently instead of sequentially — see runAction() in interactions.ts.
+ */
 export const ActionSchema = z.object({
+  id: z.string().default(genActionId),
   type: ActionTypeSchema,
   /** Free-form per-action parameters (validated per-type in the runtime). */
   params: z.record(z.unknown()).default({}),
@@ -247,6 +274,7 @@ export interface ElementShape {
   tint?: z.infer<typeof LayerTintSchema>;
   mask?: z.infer<typeof LayerMaskSchema>;
   locked?: boolean;
+  visible?: boolean;
   children?: ElementShape[];
 }
 
@@ -272,6 +300,7 @@ export interface ElementInput {
   tint?: z.input<typeof LayerTintSchema>;
   mask?: z.input<typeof LayerMaskSchema>;
   locked?: boolean;
+  visible?: boolean;
   children?: ElementInput[];
 }
 
@@ -293,6 +322,7 @@ export const ElementSchema: z.ZodType<ElementShape, z.ZodTypeDef, ElementInput> 
     tint: LayerTintSchema.optional(),
     mask: LayerMaskSchema.optional(),
     locked: z.boolean().default(false),
+    visible: z.boolean().default(true),
     children: z.array(ElementSchema).optional(),
   })
 );
@@ -332,8 +362,8 @@ export const SceneSchema = z.object({
 });
 
 export const ProjectSchema = z.object({
-  /** Schema version 3: layer system (replaces group, adds tint/mask/locked). */
-  schemaVersion: z.literal(3).default(3),
+  /** Schema version 4: rich-text content model for text elements (adds props.content). */
+  schemaVersion: z.literal(4).default(4),
   id: z.string(),
   name: z.string(),
   /** Canvas size for the whole project (one size for all scenes — a kiosk has one screen). */
@@ -361,6 +391,10 @@ export const ProjectSchema = z.object({
  * dataSources → dataConnectors.
  *
  * V2 → V3 migration: upgrade to 3 and convert group → layer elements.
+ *
+ * V3 → V4 migration: upgrade to 4 and give every `text` element a
+ * `props.content` (RichTextDoc), built from `props.runs` if present, else
+ * from `props.text`. Drops `props.runs` once migrated.
  */
 export function parseProject(input: unknown) {
   if (input && typeof input === "object") {
@@ -404,6 +438,20 @@ export function parseProject(input: unknown) {
       }
     }
 
+    // Migrate schemaVersion 3 → 4
+    if (o.schemaVersion === 3) {
+      o.schemaVersion = 4;
+
+      const scenes = o.scenes as Array<{ elements?: unknown[] }> | undefined;
+      if (scenes) {
+        for (const scene of scenes) {
+          if (scene.elements) {
+            scene.elements = migrateTextContent(scene.elements);
+          }
+        }
+      }
+    }
+
     // Adopt scene size if project has no width/height
     if (o.width === undefined || o.height === undefined) {
       const scenes = o.scenes as Array<Record<string, unknown>> | undefined;
@@ -438,6 +486,37 @@ function migrateGroupsToLayers(elements: unknown[]): unknown[] {
       // Recurse into children
       if (Array.isArray(element.children)) {
         element.children = migrateGroupsToLayers(element.children);
+      }
+    }
+    return el;
+  });
+}
+
+/**
+ * Recursively give every `type: "text"` element a `props.content`
+ * (RichTextDoc), built from `props.runs` if present, else from `props.text`.
+ * Drops `props.runs` once migrated — ElementRenderer only reads `props.content`.
+ */
+function migrateTextContent(elements: unknown[]): unknown[] {
+  return elements.map((el) => {
+    if (el && typeof el === "object") {
+      const element = el as Record<string, unknown>;
+
+      if (element.type === "text") {
+        const props = (element.props ?? {}) as Record<string, unknown>;
+        if (props.content === undefined) {
+          const runs = props.runs as LegacyTextRun[] | undefined;
+          props.content = Array.isArray(runs) && runs.length > 0
+            ? legacyRunsToRichTextDoc(runs)
+            : plainTextToRichTextDoc(typeof props.text === "string" ? props.text : "");
+        }
+        delete props.runs;
+        element.props = props;
+      }
+
+      // Recurse into children
+      if (Array.isArray(element.children)) {
+        element.children = migrateTextContent(element.children);
       }
     }
     return el;

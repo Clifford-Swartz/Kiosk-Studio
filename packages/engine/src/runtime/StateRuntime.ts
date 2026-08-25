@@ -1,5 +1,5 @@
 import type { Scene, Element } from "../model/types.js";
-import { VisibilityManager } from "./VisibilityManager.js";
+import { plainTextToRichTextDoc } from "../model/richText.js";
 
 /**
  * Scene state runtime manages active state and applies visibility + property overrides.
@@ -16,11 +16,11 @@ export class StateRuntime {
    * Set active state for current scene. Pass "default" or null to clear state.
    * Optional sceneId validates state applies to correct scene (prevents race conditions).
    */
-  setState(stateName: string | null, sceneId?: string): void {
+  setState(stateName: string | null, sceneId?: string): boolean {
     // Validate scene hasn't changed (race condition check)
     if (sceneId && this.currentScene?.id !== sceneId) {
       console.warn(`[StateRuntime] setState ignored: scene changed from ${sceneId} to ${this.currentScene?.id}`);
-      return;
+      return false;
     }
 
     if (stateName === "default") {
@@ -32,6 +32,7 @@ export class StateRuntime {
     if (this.notifyChange) {
       this.notifyChange();
     }
+    return true;
   }
 
   /**
@@ -81,15 +82,26 @@ export class StateRuntime {
 
     // Apply visibility override
     if (elementOverride.visible !== undefined) {
-      result.opacity = VisibilityManager.visibleToOpacity(
-        elementOverride.visible,
-        element.opacity ?? 1
-      );
+      result.visible = elementOverride.visible;
     }
 
-    // Apply property overrides (return only overrides, let pipeline merge)
+    // Apply property overrides, merged onto the element's own props — a
+    // wholesale replace would drop every other prop (fontSize, color,
+    // content, ...) the moment a single key is overridden.
     if (elementOverride.props) {
-      result.props = elementOverride.props;
+      const props: Record<string, unknown> = { ...element.props, ...elementOverride.props };
+      // A plain-string "text" override predates the richtext `content` field
+      // and would otherwise be silently shadowed by stale `content` at
+      // render time (TextElement prefers `content` when present). Keep them
+      // in sync unless the override explicitly set `content` itself.
+      if (
+        element.type === "text" &&
+        typeof elementOverride.props.text === "string" &&
+        elementOverride.props.content === undefined
+      ) {
+        props.content = plainTextToRichTextDoc(elementOverride.props.text);
+      }
+      result.props = props;
     }
 
     return result;
@@ -100,17 +112,5 @@ export class StateRuntime {
    */
   setNotifyChange(callback: (() => void) | null): void {
     this.notifyChange = callback;
-  }
-
-  /**
-   * Check if element is visible in current state.
-   * Returns true if no state active or element has no visibility override.
-   */
-  isVisible(element: Element): boolean {
-    return VisibilityManager.isVisibleInState(
-      element,
-      this.activeStateName ?? undefined,
-      this.currentScene ?? { states: {} }
-    );
   }
 }

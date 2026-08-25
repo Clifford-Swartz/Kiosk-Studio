@@ -44,7 +44,7 @@ function MenuDropdown({
  * Note: Electron disables window.prompt(), so renaming is done with an inline
  * input (double-click the scene name, or click Rename) — never a prompt dialog.
  */
-export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onExport, onUndo, onRedo, canUndo, canRedo }: {
+export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx, onExport, onUndo, onRedo, canUndo, canRedo, onToggleAi, aiOpen }: {
   onPlay: () => void;
   onKiosk: () => void;
   onSave: () => void;
@@ -56,6 +56,8 @@ export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  onToggleAi: () => void;
+  aiOpen: boolean;
 }) {
 
   const dirty = useEditor((s) => s.dirty);
@@ -121,6 +123,14 @@ export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx
         title={snapEnabled ? "Snap to guides: ON" : "Snap to guides: OFF"}
       >
         ⊞
+      </button>
+
+      <button
+        style={{ ...iconBtn, opacity: aiOpen ? 1 : 0.7 }}
+        onClick={onToggleAi}
+        title="AI assistant"
+      >
+        ✨
       </button>
 
       <button

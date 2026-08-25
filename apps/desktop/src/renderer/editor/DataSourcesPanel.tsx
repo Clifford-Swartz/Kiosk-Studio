@@ -1,13 +1,14 @@
-import { useState, type CSSProperties } from "react";
+import { useState, useSyncExternalStore, type CSSProperties } from "react";
 import { useEditor } from "./store.js";
-import type { DataConnectorDef, EventKind } from "@kiosk/engine";
-import { isRestConnector } from "@kiosk/engine";
+import type { DataConnectorDef, EventKind, SinkStatus } from "@kiosk/engine";
+import { isRestConnector, analyticsStore } from "@kiosk/engine";
 
 const EVENT_KINDS: EventKind[] = [
   "sessionStart",
   "sessionEnd",
   "sceneEnter",
   "sceneExit",
+  "stateExit",
   "elementTap",
   "elementHover",
   "elementPress",
@@ -36,6 +37,10 @@ export function DataSourcesPanel() {
 
   const [activeTab, setActiveTab] = useState<"sources" | "sinks">("sources");
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const sinkStatuses = useSyncExternalStore(
+    (listener) => analyticsStore.subscribeStatus(listener),
+    () => analyticsStore.getStatusSnapshot()
+  );
 
   // Filter connectors by tab
   const sources = connectors.filter(isRestConnector).filter((c) => c.input?.enabled);
@@ -186,6 +191,7 @@ export function DataSourcesPanel() {
                   <span style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase" }}>
                     {c.kind}
                   </span>
+                  <SinkStatusBadge status={sinkStatuses[c.id]} />
                   <button
                     title="Remove"
                     style={delBtn}
@@ -268,6 +274,31 @@ export function DataSourcesPanel() {
         </>
       )}
     </div>
+  );
+}
+
+/** Small dot indicating a sink's last flush outcome. Hover for details. */
+function SinkStatusBadge({ status }: { status: SinkStatus | undefined }) {
+  if (!status || status.state === "idle") return null;
+
+  const color = status.state === "ok" ? "#4ade80" : "#f87171";
+  const title =
+    status.state === "ok"
+      ? `Last flush succeeded${status.lastFlushAt ? ` at ${new Date(status.lastFlushAt).toLocaleTimeString()}` : ""}`
+      : `Last flush failed: ${status.message ?? "unknown error"}`;
+
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-block",
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: color,
+        flexShrink: 0,
+      }}
+    />
   );
 }
 

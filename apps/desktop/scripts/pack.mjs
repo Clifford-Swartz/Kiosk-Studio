@@ -5,8 +5,10 @@
 // Run AFTER `electron-vite build` (so out/ exists). `pnpm package` does both.
 import { packager } from "@electron/packager";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve, join } from "node:path";
+import { dirname, resolve, join, basename } from "node:path";
 import { cp, rm, mkdir } from "node:fs/promises";
+import ffmpegPath from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -83,6 +85,24 @@ async function main() {
       "Examples directory copy"
     );
     console.log("✓ Examples copied successfully");
+
+    // ffmpeg-static/ffprobe-static ship their binaries inside node_modules/,
+    // which this staged build deliberately excludes (see the comment at the
+    // top of this file) - copy just the two binaries the video re-encode
+    // feature needs into resources/bin/, read back via process.resourcesPath
+    // in main/index.ts when app.isPackaged.
+    console.log("Copying ffmpeg/ffprobe binaries...");
+    const binDest = join(resourcesPath, "bin");
+    await mkdir(binDest, { recursive: true });
+    await withTimeout(
+      Promise.all([
+        cp(ffmpegPath, join(binDest, basename(ffmpegPath))),
+        cp(ffprobeStatic.path, join(binDest, basename(ffprobeStatic.path))),
+      ]),
+      30000,
+      "ffmpeg/ffprobe binary copy"
+    );
+    console.log("✓ ffmpeg/ffprobe binaries copied successfully");
   } finally {
     // Always clean up staging directory, even if packaging failed
     await rm(stage, { recursive: true, force: true });

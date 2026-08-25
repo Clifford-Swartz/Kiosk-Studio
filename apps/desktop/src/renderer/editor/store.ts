@@ -3,6 +3,14 @@ import {
   createElement,
   createScene,
   newId,
+  mapActions,
+  filterActions,
+  removeActionById,
+  canHaveChildren,
+  findElement,
+  findParent,
+  isDescendant,
+  patchElement as patchElementTree,
   type Action,
   type Binding,
   type DataConnectorDef,
@@ -13,6 +21,24 @@ import {
   type Scene,
   type TriggerKind,
 } from "@kiosk/engine";
+
+/**
+ * A video import (or an already-in-project asset failing at playback) whose
+ * codec Chromium's <video> can't decode. Set by assets.ts/Canvas.tsx when a
+ * probe or runtime error detects this; cleared by VideoIncompatibilityModal
+ * once the user picks an action. `resolve` is the caller's continuation —
+ * called with the relative path to use (possibly re-encoded), or null if the
+ * user canceled.
+ */
+export interface PendingVideoIncompatibility {
+  fileName: string;
+  relativePath: string;
+  projectPath: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  reason?: string;
+  resolve: (relativePath: string | null) => void;
+}
 
 /**
  * The editor's single source of truth. Holds the working Project plus UI
@@ -60,6 +86,8 @@ export interface EditorState {
   editingId: string | null;
   /** Mask editing mode: element ID being edited, or null. */
   maskEditingId: string | null;
+  /** Codec-incompatible video awaiting a user decision (re-encode / import anyway / cancel). */
+  videoIncompatibility: PendingVideoIncompatibility | null;
 
   // --- selectors (derived) ---
   activeScene: () => Scene;
@@ -120,6 +148,8 @@ export interface EditorState {
   exitTextEditing: () => void;
   startMaskEditing: (elementId: string) => void;
   exitMaskEditing: () => void;
+  /** Open (or close, with null) the codec-incompatibility modal. */
+  setVideoIncompatibility: (pending: PendingVideoIncompatibility | null) => void;
   setActiveTab: (tab: "scene" | "project") => void;
   toggleSceneCollapse: (sceneId: string) => void;
   setVisualParent: (sceneId: string, parentId: string | null) => void;
@@ -150,9 +180,16 @@ export interface EditorState {
   // --- interactions (triggers & actions) ---
   addInteraction: (elementId: string, trigger: TriggerKind) => void;
   removeInteraction: (elementId: string, interactionId: string) => void;
-  addAction: (elementId: string, interactionId: string, action: Action) => void;
-  updateAction: (elementId: string, interactionId: string, index: number, patch: Partial<Action>) => void;
-  removeAction: (elementId: string, interactionId: string, index: number) => void;
+  /** parentActionId: append into that "parallel" group instead of the interaction's top-level list. */
+  addAction: (elementId: string, interactionId: string, action: Omit<Action, "id">, parentActionId?: string) => void;
+  updateAction: (elementId: string, interactionId: string, actionId: string, patch: Partial<Action>) => void;
+  removeAction: (elementId: string, interactionId: string, actionId: string) => void;
+  /** Reorder a top-level action within an interaction's action list (does not reach into "parallel" groups). */
+  reorderAction: (elementId: string, interactionId: string, actionId: string, toIndex: number) => void;
+  /** Wrap two top-level actions in a new "parallel" group. */
+  groupActions: (elementId: string, interactionId: string, actionIdA: string, actionIdB: string) => void;
+  /** Flatten a "parallel" group back into sequential siblings in its place. */
+  ungroupAction: (elementId: string, interactionId: string, groupActionId: string) => void;
 }
 
 /** Replace the active scene via a transform, returning a new scenes array. */
@@ -169,23 +206,8 @@ function withActiveScene(
 }
 
 /** Map over a scene's elements, patching the one matching `id`. Recursively searches nested children. */
-function patchElement(
-  scene: Scene,
-  id: string,
-  transform: (el: Element) => Element
-): Scene {
-  const patchRecursive = (elements: Element[]): Element[] => {
-    return elements.map((el) => {
-      if (el.id === id) {
-        return transform(el);
-      }
-      if (el.children) {
-        return { ...el, children: patchRecursive(el.children) };
-      }
-      return el;
-    });
-  };
-  return { ...scene, elements: patchRecursive(scene.elements) };
+function patchElement(scene: Scene, id: string, transform: (el: Element) => Element): Scene {
+  return { ...scene, elements: patchElementTree(scene.elements, id, transform) };
 }
 
 /**
@@ -204,20 +226,8 @@ function reorderWithinSiblings(elements: Element[], id: string, toIndex: number)
     return els.map((e, i) => ({ ...e, zIndex: i + 1 }));
   }
   return elements.map((el) =>
-    el.children ? { ...el, children: reorderWithinSiblings(el.children, id, toIndex) } : el
+    canHaveChildren(el) ? { ...el, children: reorderWithinSiblings(el.children!, id, toIndex) } : el
   );
-}
-
-/** Find an element by ID, searching recursively through nested children. */
-function findElement(elements: Element[], id: string): Element | null {
-  for (const el of elements) {
-    if (el.id === id) return el;
-    if (el.children) {
-      const found = findElement(el.children, id);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 /** Deep clone an element with new IDs for itself and all nested children. */
@@ -229,25 +239,9 @@ function deepCloneElement(element: Element): Element {
   };
 }
 
-/** Find the parent element of a given element ID. Returns null if element is at root level. */
-function findParent(elements: Element[], targetId: string): Element | null {
-  for (const el of elements) {
-    if (el.children) {
-      // Check if target is a direct child
-      if (el.children.some(child => child.id === targetId)) {
-        return el;
-      }
-      // Recursively search in children
-      const parent = findParent(el.children, targetId);
-      if (parent) return parent;
-    }
-  }
-  return null;
-}
-
 export const useEditor = create<EditorState>((set, get) => ({
   // Placeholder until loadProject runs; replaced on first render.
-  project: { schemaVersion: 3, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataConnectors: [], enableBackButton: false, enableHomeButton: false },
+  project: { schemaVersion: 4, id: "", name: "", width: 1920, height: 1080, scenes: [createScene()], dataConnectors: [], enableBackButton: false, enableHomeButton: false },
   activeSceneId: "",
   selectedId: null,
   selectedIds: new Set(),
@@ -264,6 +258,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   collapsedElementIds: new Set(),
   editingId: null,
   maskEditingId: null,
+  videoIncompatibility: null,
 
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
 
@@ -281,6 +276,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   exitTextEditing: () => set({ editingId: null }),
   startMaskEditing: (elementId) => set({ maskEditingId: elementId, selectedId: elementId }),
   exitMaskEditing: () => set({ maskEditingId: null }),
+  setVideoIncompatibility: (pending) => set({ videoIncompatibility: pending }),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
@@ -332,7 +328,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   isModalEditingActive: () => {
     const s = get();
-    return s.editingId !== null || s.maskEditingId !== null;
+    return s.editingId !== null || s.maskEditingId !== null || s.videoIncompatibility !== null;
   },
 
   loadProject: (project, filePath = null) =>
@@ -439,7 +435,12 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   updateElementProps: (id, props) =>
     set((state) => {
-      if (state.isModalEditingActive()) return state;
+      // Unlike updateElement/moveElement/etc., this is NOT guarded by
+      // isModalEditingActive(): Properties Panel writes (fontSize, color,
+      // fill...) need to apply live while a text element is being edited in
+      // the canvas. Safe because RichTextEditor's own content/text commit
+      // always fires after exitTextEditing() has already cleared editingId,
+      // so there's no key it writes that a live panel edit could race with.
       return {
         project: withActiveScene(state, (scene) =>
           patchElement(scene, id, (el) => ({ ...el, props: { ...el.props, ...props } }))
@@ -582,18 +583,6 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (elementId === newParentId) return "Cannot reparent element to itself";
 
     // Validation 4: Can't reparent to own descendant
-    const isDescendant = (elements: Element[], ancestorId: string, descendantId: string): boolean => {
-      for (const el of elements) {
-        if (el.id === ancestorId) {
-          if (el.children) {
-            if (el.children.some(c => c.id === descendantId)) return true;
-            if (isDescendant(el.children, ancestorId, descendantId)) return true;
-          }
-        }
-        if (el.children && isDescendant(el.children, ancestorId, descendantId)) return true;
-      }
-      return false;
-    };
     if (newParentId && isDescendant(scene.elements, elementId, newParentId)) {
       return "Cannot reparent element to its own descendant";
     }
@@ -799,14 +788,16 @@ export const useEditor = create<EditorState>((set, get) => ({
 
       const scenes = state.project.scenes.filter((s) => s.id !== id);
 
-      // Break goToScene actions pointing to deleted scene
+      // Break goToScene actions pointing to deleted scene (including ones
+      // nested inside a "parallel" group)
       const cleanedScenes = scenes.map((scene) => ({
         ...scene,
         elements: scene.elements.map((el) => ({
           ...el,
           interactions: el.interactions.map((int) => ({
             ...int,
-            actions: int.actions.filter(
+            actions: filterActions(
+              int.actions,
               (act) => !(act.type === "goToScene" && act.params.sceneId === id)
             ),
           })),
@@ -1021,23 +1012,37 @@ export const useEditor = create<EditorState>((set, get) => ({
       };
     }),
 
-  addAction: (elementId, interactionId, action) =>
+  addAction: (elementId, interactionId, action, parentActionId) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
+      const withId = { ...action, id: newId("act") };
       return {
         project: withActiveScene(state, (scene) =>
           patchElement(scene, elementId, (el) => ({
             ...el,
-            interactions: el.interactions.map((i: Interaction) =>
-              i.id === interactionId ? { ...i, actions: [...i.actions, action] } : i
-            ),
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              if (parentActionId) {
+                return {
+                  ...i,
+                  actions: mapActions(i.actions, parentActionId, (group) => ({
+                    ...group,
+                    params: {
+                      ...group.params,
+                      actions: [...((group.params.actions as Action[]) ?? []), withId],
+                    },
+                  })),
+                };
+              }
+              return { ...i, actions: [...i.actions, withId] };
+            }),
           }))
         ),
         dirty: true,
       };
     }),
 
-  updateAction: (elementId, interactionId, index, patch) =>
+  updateAction: (elementId, interactionId, actionId, patch) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
       return {
@@ -1048,9 +1053,11 @@ export const useEditor = create<EditorState>((set, get) => ({
               i.id === interactionId
                 ? {
                     ...i,
-                    actions: i.actions.map((a: Action, idx: number) =>
-                      idx === index ? { ...a, ...patch, params: { ...a.params, ...(patch.params ?? {}) } } : a
-                    ),
+                    actions: mapActions(i.actions, actionId, (a) => ({
+                      ...a,
+                      ...patch,
+                      params: { ...a.params, ...(patch.params ?? {}) },
+                    })),
                   }
                 : i
             ),
@@ -1060,7 +1067,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       };
     }),
 
-  removeAction: (elementId, interactionId, index) =>
+  removeAction: (elementId, interactionId, actionId) =>
     set((state) => {
       if (state.isModalEditingActive()) return state;
       return {
@@ -1069,9 +1076,83 @@ export const useEditor = create<EditorState>((set, get) => ({
             ...el,
             interactions: el.interactions.map((i: Interaction) =>
               i.id === interactionId
-                ? { ...i, actions: i.actions.filter((_: Action, idx: number) => idx !== index) }
+                ? { ...i, actions: removeActionById(i.actions, actionId) }
                 : i
             ),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  reorderAction: (elementId, interactionId, actionId, toIndex) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const from = i.actions.findIndex((a) => a.id === actionId);
+              if (from === -1) return i;
+              const actions = [...i.actions];
+              const [moved] = actions.splice(from, 1);
+              actions.splice(Math.max(0, Math.min(toIndex, actions.length)), 0, moved);
+              return { ...i, actions };
+            }),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  /** Wrap two top-level actions in a new "parallel" group at actionIdA's position. */
+  groupActions: (elementId, interactionId, actionIdA, actionIdB) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const actionA = i.actions.find((a) => a.id === actionIdA);
+              const actionB = i.actions.find((a) => a.id === actionIdB);
+              if (!actionA || !actionB) return i;
+              const group: Action = {
+                id: newId("act"),
+                type: "parallel",
+                params: { actions: [actionA, actionB] },
+              };
+              return {
+                ...i,
+                actions: i.actions
+                  .filter((a) => a.id !== actionIdB)
+                  .map((a) => (a.id === actionIdA ? group : a)),
+              };
+            }),
+          }))
+        ),
+        dirty: true,
+      };
+    }),
+
+  /** Splice a "parallel" group's nested actions back into the parent list in its place. */
+  ungroupAction: (elementId, interactionId, groupActionId) =>
+    set((state) => {
+      if (state.isModalEditingActive()) return state;
+      return {
+        project: withActiveScene(state, (scene) =>
+          patchElement(scene, elementId, (el) => ({
+            ...el,
+            interactions: el.interactions.map((i: Interaction) => {
+              if (i.id !== interactionId) return i;
+              const group = i.actions.find((a) => a.id === groupActionId);
+              if (!group || group.type !== "parallel") return i;
+              const nested = (group.params.actions as Action[]) ?? [];
+              return { ...i, actions: i.actions.flatMap((a) => (a.id === groupActionId ? nested : [a])) };
+            }),
           }))
         ),
         dirty: true,

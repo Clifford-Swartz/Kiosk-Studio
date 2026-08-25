@@ -16,6 +16,14 @@ export interface PlayerContext {
   playAudio: (elementId: string) => void;
   togglePlayVideo: (elementId: string) => void;
   seekVideo: (elementId: string, time: number) => void;
+  scrubVideo: (
+    elementId: string,
+    from: number | undefined,
+    to: number,
+    duration: number,
+    easing?: EasingCurve,
+    delay?: number
+  ) => Promise<void>;
   setVolume: (elementId: string, volume: number) => void;
   setSpeed: (elementId: string, rate: number) => void;
   animate: (
@@ -36,13 +44,6 @@ export interface PlayerContext {
  * Now async to support blocking animations in interaction sequences.
  */
 export async function runInteraction(interaction: Interaction, ctx: PlayerContext, element?: Element): Promise<void> {
-  console.log(`[DEBUG-anim] runInteraction() called:`, {
-    trigger: interaction.trigger,
-    actionsCount: interaction.actions.length,
-    elementId: element?.id,
-    elementType: element?.type,
-  });
-
   // Emit element event for trigger
   if (element) {
     switch (interaction.trigger) {
@@ -75,12 +76,7 @@ export async function runInteraction(interaction: Interaction, ctx: PlayerContex
 
   for (let i = 0; i < interaction.actions.length; i++) {
     const action = interaction.actions[i];
-    console.log(`[DEBUG-anim] Running action ${i + 1}/${interaction.actions.length}:`, {
-      type: action.type,
-      params: action.params,
-    });
     await runAction(action, ctx, element);
-    console.log(`[DEBUG-anim] Action ${i + 1}/${interaction.actions.length} completed`);
   }
 }
 
@@ -166,6 +162,28 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
       return;
     }
 
+    case "scrubVideo": {
+      const target = action.params.target;
+      const from = action.params.from;
+      const to = action.params.to;
+      const duration = action.params.duration;
+      const easing = action.params.easing;
+      const delay = action.params.delay;
+      if (typeof target !== "string" || typeof to !== "number" || typeof duration !== "number") {
+        warn("scrubVideo needs params.target (string), params.to (number), and params.duration (number)");
+        return;
+      }
+      await ctx.scrubVideo(
+        target,
+        typeof from === "number" ? from : undefined,
+        to,
+        duration,
+        (easing as EasingCurve) ?? "linear",
+        (delay as number) ?? 0
+      );
+      return;
+    }
+
     case "setVolume": {
       const target = action.params.target;
       const volume = action.params.volume;
@@ -190,21 +208,10 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
 
     case "animate": {
       const { target, property, from, to, duration, easing, delay } = action.params;
-      console.log(`[DEBUG-anim] runAction('animate') called with params:`, {
-        target,
-        property,
-        from,
-        to,
-        duration,
-        easing,
-        delay,
-      });
       if (typeof target !== "string" || typeof property !== "string" || !to || typeof duration !== "number") {
-        console.error(`[DEBUG-anim] runAction('animate') validation failed - missing required params`);
         warn("animate needs params.target (string), params.property (string), params.to, params.duration (number)");
         return;
       }
-      console.log(`[DEBUG-anim] runAction('animate') calling ctx.animate()...`);
       await ctx.animate(
         target,
         property as AnimatableProperty,
@@ -214,7 +221,6 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
         (easing as EasingCurve) ?? "linear",
         (delay as number) ?? 0
       );
-      console.log(`[DEBUG-anim] runAction('animate') ctx.animate() completed`);
       return;
     }
 
@@ -229,6 +235,16 @@ async function runAction(action: Action, ctx: PlayerContext, element?: Element):
         (animated as boolean) ?? false,
         (duration as number) ?? 300
       );
+      return;
+    }
+
+    case "parallel": {
+      const nested = action.params.actions;
+      if (!Array.isArray(nested)) {
+        warn("parallel action needs params.actions (array)");
+        return;
+      }
+      await Promise.all(nested.map((a) => runAction(a as Action, ctx, element)));
       return;
     }
 

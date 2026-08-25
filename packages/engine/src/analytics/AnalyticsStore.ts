@@ -2,13 +2,47 @@ import type {
   CsvConnectorDef,
   ConsoleConnectorDef,
   DataConnectorDef,
+  Element,
   JsonConnectorDef,
   JsonlConnectorDef,
+  Project,
   RestConnectorDef,
 } from "../model/types.js";
 import type { EventKind, KioskEvent, Unsubscribe } from "../events/events.js";
 import { eventBus } from "../events/EventBus.js";
-import { toCSV, toJSON, toJSONL, toConsoleCompact } from "./formatters.js";
+import { toCSV, toJSON, toJSONL, toConsoleCompact, type NameResolver } from "./formatters.js";
+
+function collectElementNames(elements: Element[], into: Map<string, string>): void {
+  for (const el of elements) {
+    if (el.name) into.set(el.id, el.name);
+    if (el.children) collectElementNames(el.children, into);
+  }
+}
+
+/** Builds scene/element id -> name lookups from the current project, for CSV export. */
+function buildNameResolver(project: Project | null): NameResolver {
+  const sceneNames = new Map<string, string>();
+  const elementNames = new Map<string, string>();
+
+  if (project) {
+    for (const scene of project.scenes) {
+      sceneNames.set(scene.id, scene.name);
+      collectElementNames(scene.elements, elementNames);
+    }
+  }
+
+  return {
+    sceneName: (id) => sceneNames.get(id) ?? id,
+    elementName: (id) => elementNames.get(id) ?? id,
+  };
+}
+
+/** Per-sink export status, surfaced in the editor's Sinks panel. */
+export interface SinkStatus {
+  state: "idle" | "ok" | "error";
+  message?: string;
+  lastFlushAt?: number;
+}
 
 /**
  * Analytics store: buffers kiosk events per sink, flushes to export destinations.
@@ -24,6 +58,35 @@ class AnalyticsStoreImpl {
   private buffers = new Map<string, KioskEvent[]>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private unsubs: Unsubscribe[] = [];
+  private statuses: Record<string, SinkStatus> = {};
+  private statusListeners = new Set<() => void>();
+  private project: Project | null = null;
+  /** Last sessionId successfully written to each CSV sink, so a header isn't re-emitted mid-session. */
+  private lastCsvSessionId = new Map<string, string>();
+
+  /**
+   * Keep the current project reference fresh for CSV name resolution (scene/element
+   * names can change from editor edits without a new Player session starting).
+   */
+  setProject(project: Project | null): void {
+    this.project = project;
+  }
+
+  /** Subscribe to sink status changes (for useSyncExternalStore in the editor UI). */
+  subscribeStatus(listener: () => void): Unsubscribe {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  /** Snapshot of all sink statuses, keyed by sink id. Stable reference until next update. */
+  getStatusSnapshot(): Record<string, SinkStatus> {
+    return this.statuses;
+  }
+
+  private setStatus(sinkId: string, status: SinkStatus): void {
+    this.statuses = { ...this.statuses, [sinkId]: status };
+    for (const listener of this.statusListeners) listener();
+  }
 
   /**
    * Initialize analytics with output sinks from project data connectors.
@@ -111,91 +174,148 @@ class AnalyticsStoreImpl {
   /**
    * Flush one sink's buffer to its export destination.
    */
-  private flushSink(sink: DataConnectorDef): void {
+  private flushSink(sink: DataConnectorDef): Promise<void> {
     const buffer = this.buffers.get(sink.id);
-    if (!buffer || buffer.length === 0) return;
+    if (!buffer || buffer.length === 0) return Promise.resolve();
 
     const events = [...buffer]; // Copy before clearing
     this.buffers.set(sink.id, []); // Clear buffer
 
     switch (sink.kind) {
       case "csv":
-        this.exportCSV(sink, events);
-        break;
+        return this.exportCSV(sink, events);
       case "json":
-        this.exportJSON(sink, events);
-        break;
+        return this.exportJSON(sink, events);
       case "jsonl":
-        this.exportJSONL(sink, events);
-        break;
+        return this.exportJSONL(sink, events);
       case "rest":
-        this.exportREST(sink, events);
-        break;
+        return this.exportREST(sink, events);
       case "console":
         this.exportConsole(sink, events);
-        break;
+        return Promise.resolve();
+      default:
+        return Promise.resolve();
     }
   }
 
   /**
    * Export to CSV file via IPC (main process fs write).
    */
-  private exportCSV(sink: CsvConnectorDef, events: KioskEvent[]): void {
-    const csv = toCSV(events);
+  private exportCSV(sink: CsvConnectorDef, events: KioskEvent[]): Promise<void> {
     const path = sink.output.path;
     const append = sink.output.appendMode;
 
+    // Only suppress the header when appending onto rows from this same session —
+    // a new session (or overwrite mode) should always get a fresh header.
+    const sessionId = events[0]?.sessionId;
+    const includeHeader = !(append && this.lastCsvSessionId.get(sink.id) === sessionId);
+    const csv = toCSV(events, buildNameResolver(this.project), includeHeader);
+
+    // Recorded synchronously (before the write's promise settles), not in .then():
+    // concurrent flushes of the same sink (e.g. a timer flush racing the end-of-session
+    // flush) must see each other's decision immediately, or both read the stale tracker
+    // and both conclude a header is needed.
+    if (sessionId) this.lastCsvSessionId.set(sink.id, sessionId);
+
     // IPC call to main process
     if (window.kiosk?.writeAnalytics) {
-      window.kiosk.writeAnalytics(path, csv, append).catch((err: unknown) => {
-        console.error(`[AnalyticsStore] CSV write failed (${path}):`, err);
-      });
+      return window.kiosk
+        .writeAnalytics(path, csv, append)
+        .then((result) => {
+          this.handleWriteResult(sink.id, path, "CSV", result);
+        })
+        .catch((err: unknown) => {
+          console.error(`[AnalyticsStore] CSV write failed (${path}):`, err);
+          this.setStatus(sink.id, { state: "error", message: errorMessage(err) });
+        });
+    } else {
+      this.setStatus(sink.id, { state: "error", message: "writeAnalytics bridge unavailable" });
+      return Promise.resolve();
+    }
+  }
+
+  /** Interprets the IPC write result — a resolved promise can still carry success:false. */
+  private handleWriteResult(
+    sinkId: string,
+    path: string,
+    label: string,
+    result: { success: boolean; error?: string }
+  ): void {
+    if (result.success) {
+      this.setStatus(sinkId, { state: "ok", lastFlushAt: Date.now() });
+    } else {
+      console.error(`[AnalyticsStore] ${label} write rejected (${path}):`, result.error);
+      this.setStatus(sinkId, { state: "error", message: result.error ?? "write rejected" });
     }
   }
 
   /**
    * Export to JSON file via IPC.
    */
-  private exportJSON(sink: JsonConnectorDef, events: KioskEvent[]): void {
+  private exportJSON(sink: JsonConnectorDef, events: KioskEvent[]): Promise<void> {
     const json = toJSON(events);
     const path = sink.output.path;
 
     if (window.kiosk?.writeAnalytics) {
-      window.kiosk.writeAnalytics(path, json, false).catch((err: unknown) => {
-        console.error(`[AnalyticsStore] JSON write failed (${path}):`, err);
-      });
+      return window.kiosk
+        .writeAnalytics(path, json, false)
+        .then((result) => this.handleWriteResult(sink.id, path, "JSON", result))
+        .catch((err: unknown) => {
+          console.error(`[AnalyticsStore] JSON write failed (${path}):`, err);
+          this.setStatus(sink.id, { state: "error", message: errorMessage(err) });
+        });
+    } else {
+      this.setStatus(sink.id, { state: "error", message: "writeAnalytics bridge unavailable" });
+      return Promise.resolve();
     }
   }
 
   /**
    * Export to JSONL file via IPC (append mode).
    */
-  private exportJSONL(sink: JsonlConnectorDef, events: KioskEvent[]): void {
+  private exportJSONL(sink: JsonlConnectorDef, events: KioskEvent[]): Promise<void> {
     const jsonl = toJSONL(events);
     const path = sink.output.path;
     const append = sink.output.appendMode;
 
     if (window.kiosk?.writeAnalytics) {
-      window.kiosk.writeAnalytics(path, jsonl, append).catch((err: unknown) => {
-        console.error(`[AnalyticsStore] JSONL write failed (${path}):`, err);
-      });
+      return window.kiosk
+        .writeAnalytics(path, jsonl, append)
+        .then((result) => this.handleWriteResult(sink.id, path, "JSONL", result))
+        .catch((err: unknown) => {
+          console.error(`[AnalyticsStore] JSONL write failed (${path}):`, err);
+          this.setStatus(sink.id, { state: "error", message: errorMessage(err) });
+        });
+    } else {
+      this.setStatus(sink.id, { state: "error", message: "writeAnalytics bridge unavailable" });
+      return Promise.resolve();
     }
   }
 
   /**
    * Export to REST endpoint via POST (batch array).
    */
-  private exportREST(sink: RestConnectorDef, events: KioskEvent[]): void {
+  private exportREST(sink: RestConnectorDef, events: KioskEvent[]): Promise<void> {
     const url = sink.output!.url;
 
-    fetch(url, {
+    return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(events),
       signal: AbortSignal.timeout(10000), // 10s timeout
-    }).catch((err) => {
-      console.error(`[AnalyticsStore] REST POST failed (${url}):`, err);
-    });
+    })
+      .then((res) => {
+        if (res.ok) {
+          this.setStatus(sink.id, { state: "ok", lastFlushAt: Date.now() });
+        } else {
+          console.error(`[AnalyticsStore] REST POST rejected (${url}): HTTP ${res.status}`);
+          this.setStatus(sink.id, { state: "error", message: `HTTP ${res.status}` });
+        }
+      })
+      .catch((err) => {
+        console.error(`[AnalyticsStore] REST POST failed (${url}):`, err);
+        this.setStatus(sink.id, { state: "error", message: errorMessage(err) });
+      });
   }
 
   /**
@@ -223,16 +343,18 @@ class AnalyticsStoreImpl {
     if (buffer && buffer.length > sink.output.maxEvents) {
       buffer.splice(0, buffer.length - sink.output.maxEvents);
     }
+
+    this.setStatus(sink.id, { state: "ok", lastFlushAt: Date.now() });
   }
 
   /**
-   * Flush all sinks immediately. Called on sessionEnd.
+   * Flush all sinks immediately, resolving once every export has settled.
+   * Called on sessionEnd, and awaited before quitting a launched kiosk so
+   * buffered events aren't lost to a process exit racing the flush.
    */
-  flushAll(connectors: DataConnectorDef[]): void {
+  flushAll(connectors: DataConnectorDef[]): Promise<void> {
     const sinks = connectors.filter((c) => c.output && c.output.enabled);
-    for (const sink of sinks) {
-      this.flushSink(sink);
-    }
+    return Promise.all(sinks.map((sink) => this.flushSink(sink))).then(() => undefined);
   }
 
   /**
@@ -255,6 +377,10 @@ class AnalyticsStoreImpl {
     // Clear buffers
     this.buffers.clear();
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Singleton AnalyticsStore instance */

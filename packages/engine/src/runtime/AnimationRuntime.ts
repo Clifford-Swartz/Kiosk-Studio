@@ -25,6 +25,24 @@ interface ActiveTween {
 }
 
 /**
+ * A media scrub tween. Unlike ActiveTween, the target isn't an element schema
+ * field resolved through the override pipeline — it's `HTMLVideoElement.currentTime`,
+ * imperative DOM state reached via `applyMediaTime`. Kept as a separate map/type
+ * because there's no schema field, no decompose/lerp-into-props step, and no
+ * persist-to-overrides on completion (currentTime is itself persistent state).
+ */
+interface ActiveMediaScrub {
+  elementId: string;
+  from: number;
+  to: number;
+  startTime: number;
+  duration: number;
+  delay: number;
+  easing: EasingCurve;
+  onComplete?: () => void;
+}
+
+/**
  * Animation runtime manages property tweens triggered by interactions.
  * Applies as final layer in rendering pipeline (overrides bindings/states/setProp).
  *
@@ -38,11 +56,14 @@ interface ActiveTween {
  */
 export class AnimationRuntime {
   private activeTweens: Map<string, ActiveTween> = new Map();
+  private activeMediaScrubs: Map<string, ActiveMediaScrub> = new Map();
   private rafId: number | null = null;
   private currentOverrides: Map<string, Partial<Element>> = new Map();
   private elementLookup: ((elementId: string) => Element | null) | null = null;
+  private elementResolverFn: ((element: Element) => Element) | null = null;
   private notifyChange: (() => void) | null = null;
   private persistToOverrides: ((elementId: string, property: AnimatableProperty, value: AnimatableValue) => void) | null = null;
+  private applyMediaTime: ((elementId: string, time: number, force: boolean) => void) | null = null;
 
   /**
    * Start a new animation. Returns promise that resolves when animation completes.
@@ -56,33 +77,18 @@ export class AnimationRuntime {
     to: AnimatableValue,
     duration: number,
     easing: EasingCurve = "linear",
-    delay = 0
+    delay = 0,
+    transient = false
   ): Promise<void> {
     const key = `${elementId}:${property}`;
 
-    console.log(`[DEBUG-anim] AnimationRuntime.animate() called:`, {
-      elementId,
-      property,
-      from,
-      to,
-      duration,
-      easing,
-      delay,
-      key,
-    });
-
     if (this.activeTweens.has(key)) {
-      console.warn(`[DEBUG-anim] Tween on ${key} already running, new tween blocked`);
+      console.warn(`[AnimationRuntime] Tween on ${key} already running, new tween blocked`);
       return Promise.reject(new Error("Animation blocked: tween already running"));
     }
 
     return new Promise((resolve) => {
       const resolvedFrom = from ?? this.getElementValue(elementId, property);
-      console.log(`[DEBUG-anim] Creating tween with resolved from value:`, {
-        key,
-        resolvedFrom,
-        to,
-      });
 
       const tween: ActiveTween = {
         elementId,
@@ -94,26 +100,34 @@ export class AnimationRuntime {
         delay,
         easing,
         onComplete: () => {
-          console.log(`[DEBUG-anim] Tween complete:`, { key });
-
-          // Persist final value to interaction override store so it survives after animation clears
-          if (this.persistToOverrides) {
-            console.log(`[DEBUG-anim] Persisting final value to override store:`, { elementId, property, to });
+          // Persist final value to interaction override store so it survives after animation clears.
+          // Transient tweens (e.g. a state-change fade) skip this — the state
+          // change itself is the source of truth, and persisting here would
+          // leave a permanent override the state transition can't clear.
+          if (!transient && this.persistToOverrides) {
             this.persistToOverrides(elementId, property, to);
           }
 
           this.activeTweens.delete(key);
 
-          // Clear this element's animation overrides now that value is persisted
-          const overrides = this.currentOverrides.get(elementId);
-          if (overrides) {
-            for (const field of getFields(property)) {
-              delete overrides[field as keyof Element];
-            }
+          // Clear this element's animation overrides now that the value is
+          // persisted elsewhere. Transient tweens skip this: nothing else
+          // holds their value, so clearing immediately would snap the
+          // property back to its pre-tween value for a frame (visible as a
+          // flicker) before a caller-chained tween (e.g. the fade-in half of
+          // a state-change fade) picks it back up. The caller is responsible
+          // for releasing it via clearTransientOverride() once truly done.
+          if (!transient) {
+            const overrides = this.currentOverrides.get(elementId);
+            if (overrides) {
+              for (const field of getFields(property)) {
+                delete overrides[field as keyof Element];
+              }
 
-            // Remove element entry if no more overrides
-            if (Object.keys(overrides).length === 0) {
-              this.currentOverrides.delete(elementId);
+              // Remove element entry if no more overrides
+              if (Object.keys(overrides).length === 0) {
+                this.currentOverrides.delete(elementId);
+              }
             }
           }
 
@@ -123,9 +137,70 @@ export class AnimationRuntime {
       };
 
       this.activeTweens.set(key, tween);
-      console.log(`[DEBUG-anim] Tween added to activeTweens. Total active tweens:`, this.activeTweens.size);
       this.startLoop();
     });
+  }
+
+  /**
+   * Scrub an `HTMLVideoElement`'s `currentTime` between two points over `duration`,
+   * driven by the same RAF loop as property tweens. Unlike `animate()`, there's no
+   * schema field to write and nothing to persist on completion — `currentTime` is
+   * itself persistent DOM state on the video element `applyMediaTime` reaches.
+   * Also sidesteps Chromium's lack of negative `playbackRate` support: driving
+   * `currentTime` frame-by-frame works in either direction with no special-casing.
+   */
+  scrubMedia(
+    elementId: string,
+    from: number,
+    to: number,
+    duration: number,
+    easing: EasingCurve = "linear",
+    delay = 0
+  ): Promise<void> {
+    if (this.activeMediaScrubs.has(elementId)) {
+      console.warn(`[AnimationRuntime] Media scrub on ${elementId} already running, new scrub blocked`);
+      return Promise.reject(new Error("Scrub blocked: media scrub already running"));
+    }
+
+    return new Promise((resolve) => {
+      const scrub: ActiveMediaScrub = {
+        elementId,
+        from,
+        to,
+        startTime: performance.now(),
+        duration,
+        delay,
+        easing,
+        onComplete: () => {
+          this.activeMediaScrubs.delete(elementId);
+          resolve();
+        },
+      };
+
+      this.activeMediaScrubs.set(elementId, scrub);
+      this.startLoop();
+    });
+  }
+
+  /**
+   * Release a transient tween's held-over override value for a property.
+   * Transient tweens (see `animate`'s `transient` param) don't clear their
+   * override on completion so a caller can chain a second transient tween
+   * on the same key without a one-frame flicker in between (e.g. the
+   * fade-out/fade-in pair behind an animated scene-state change in
+   * Player.tsx). Call this once the chain is actually done, or the held
+   * value keeps masking whatever the property should resolve to next.
+   */
+  clearTransientOverride(elementId: string, property: AnimatableProperty): void {
+    const overrides = this.currentOverrides.get(elementId);
+    if (!overrides) return;
+    for (const field of getFields(property)) {
+      delete overrides[field as keyof Element];
+    }
+    if (Object.keys(overrides).length === 0) {
+      this.currentOverrides.delete(elementId);
+    }
+    this.updateOverrides();
   }
 
   /**
@@ -141,6 +216,7 @@ export class AnimationRuntime {
     for (const key of keysToDelete) {
       this.activeTweens.delete(key);
     }
+    this.activeMediaScrubs.delete(elementId);
     if (keysToDelete.length > 0) {
       this.updateOverrides();
     }
@@ -151,6 +227,7 @@ export class AnimationRuntime {
    */
   cancelAll(): void {
     this.activeTweens.clear();
+    this.activeMediaScrubs.clear();
     this.currentOverrides.clear();
     this.stopLoop();
   }
@@ -170,6 +247,15 @@ export class AnimationRuntime {
   }
 
   /**
+   * Set the resolver function (called by Player to provide ElementResolver's
+   * resolveElement, so `from` values reflect bindings + state + overrides,
+   * not just raw schema — see ADR 0010).
+   */
+  setElementResolver(resolver: ((element: Element) => Element) | null): void {
+    this.elementResolverFn = resolver;
+  }
+
+  /**
    * Set change notification callback (called by ElementResolver to invalidate cache on animation updates).
    */
   setNotifyChange(callback: (() => void) | null): void {
@@ -184,32 +270,79 @@ export class AnimationRuntime {
   }
 
   /**
+   * Set the callback that writes a media scrub's interpolated time onto the
+   * actual `HTMLVideoElement` (called by Player; reaches the video via its ref map).
+   * `force` is true only for the final write of a scrub — the callback should
+   * apply it unconditionally so the video always lands exactly on `to`, even
+   * if a previous seek is still in flight (see `tick()`).
+   */
+  setApplyMediaTime(callback: ((elementId: string, time: number, force: boolean) => void) | null): void {
+    this.applyMediaTime = callback;
+  }
+
+  /**
    * Get current rendered value for property (used when `from` is omitted).
-   * Reads from schema element via lookup function, or falls back to defaults.
+   * Resolves the base schema element through `elementResolverFn` (bindings +
+   * state + interaction overrides) so the animation starts from the value
+   * actually on screen, not the raw schema default (ADR 0010).
    */
   private getElementValue(elementId: string, property: AnimatableProperty): AnimatableValue {
-    // Try to get base element from lookup
-    let el: Element | Partial<Element> | null = this.elementLookup ? this.elementLookup(elementId) : null;
+    const baseEl = this.elementLookup ? this.elementLookup(elementId) : null;
 
-    // Check overrides (these take precedence over base element)
+    if (baseEl) {
+      const resolved = this.elementResolverFn ? this.elementResolverFn(baseEl) : baseEl;
+      return getCurrentValue(resolved, property);
+    }
+
     const overrides = this.currentOverrides.get(elementId);
     if (overrides) {
-      el = el ? { ...el, ...overrides } : overrides;
+      return getCurrentValue(overrides, property);
     }
 
-    if (!el) {
-      return getDefaultValue(property);
+    return getDefaultValue(property);
+  }
+
+  /**
+   * Resolve what `property` would be on `elementId` with this runtime's own
+   * held-over override for it set aside. `elementResolverFn` always layers
+   * this runtime's overrides last (see ElementResolver), so a plain
+   * `getElementValue` taken while a transient tween is holding its
+   * completed value (e.g. the fade-out half of a state-change fade, held at
+   * opacity 0 so the gap before fade-in doesn't flicker — see `animate`'s
+   * `transient` param) would read back that held value instead of the
+   * resting value bindings/state/interaction-overrides actually resolve to.
+   * Used to compute a fade-in's target so it animates toward where the
+   * element should land, not toward the fade-out's own leftover 0.
+   */
+  resolveRestingValue(elementId: string, property: AnimatableProperty): AnimatableValue {
+    const overrides = this.currentOverrides.get(elementId);
+    const fields = getFields(property);
+    const saved = new Map<string, unknown>();
+
+    if (overrides) {
+      for (const field of fields) {
+        if (field in overrides) {
+          saved.set(field, overrides[field as keyof Element]);
+          delete overrides[field as keyof Element];
+        }
+      }
     }
 
-    return getCurrentValue(el, property);
+    const value = this.getElementValue(elementId, property);
+
+    if (overrides) {
+      for (const [field, savedValue] of saved) {
+        overrides[field as keyof Element] = savedValue as any;
+      }
+    }
+
+    return value;
   }
 
   private startLoop(): void {
     if (this.rafId !== null) {
-      console.log(`[DEBUG-anim] startLoop(): RAF loop already running (rafId=${this.rafId})`);
       return;
     }
-    console.log(`[DEBUG-anim] startLoop(): Starting RAF loop`);
     this.rafId = requestAnimationFrame(this.tick);
   }
 
@@ -224,15 +357,11 @@ export class AnimationRuntime {
     let hasActiveTweens = false;
     const completedTweens: ActiveTween[] = [];
 
-    console.log(`[DEBUG-anim] tick(): Processing ${this.activeTweens.size} active tweens at t=${now.toFixed(2)}`);
-
     for (const tween of this.activeTweens.values()) {
       const elapsed = now - tween.startTime;
-      const key = `${tween.elementId}:${tween.property}`;
 
       // Still in delay phase
       if (elapsed < tween.delay) {
-        console.log(`[DEBUG-anim] tick(): ${key} still in delay phase (${elapsed.toFixed(2)}ms < ${tween.delay}ms)`);
         hasActiveTweens = true;
         continue;
       }
@@ -240,13 +369,10 @@ export class AnimationRuntime {
       const progress = Math.min(1, (elapsed - tween.delay) / tween.duration);
       const easedProgress = ease(tween.easing, progress);
 
-      console.log(`[DEBUG-anim] tick(): ${key} progress=${(progress * 100).toFixed(1)}%, easedProgress=${easedProgress.toFixed(3)}`);
-
       // Update current value
       this.applyTween(tween, easedProgress);
 
       if (progress >= 1) {
-        console.log(`[DEBUG-anim] tick(): ${key} completed`);
         completedTweens.push(tween);
       } else {
         hasActiveTweens = true;
@@ -262,10 +388,39 @@ export class AnimationRuntime {
       tween.onComplete?.();
     }
 
-    if (hasActiveTweens) {
+    let hasActiveScrubs = false;
+    const completedScrubs: ActiveMediaScrub[] = [];
+
+    for (const scrub of this.activeMediaScrubs.values()) {
+      const elapsed = now - scrub.startTime;
+
+      if (elapsed < scrub.delay) {
+        hasActiveScrubs = true;
+        continue;
+      }
+
+      const progress = Math.min(1, (elapsed - scrub.delay) / scrub.duration);
+      const easedProgress = ease(scrub.easing, progress);
+
+      // Below 1, let Player drop the write if a seek is still decoding (avoids
+      // queuing seeks the decoder can't keep up with — see applyMediaTime doc).
+      // At completion, force it so the video always lands exactly on `to`.
+      this.applyMediaTime?.(scrub.elementId, lerp(scrub.from, scrub.to, easedProgress), progress >= 1);
+
+      if (progress >= 1) {
+        completedScrubs.push(scrub);
+      } else {
+        hasActiveScrubs = true;
+      }
+    }
+
+    for (const scrub of completedScrubs) {
+      scrub.onComplete?.();
+    }
+
+    if (hasActiveTweens || hasActiveScrubs) {
       this.rafId = requestAnimationFrame(this.tick);
     } else {
-      console.log(`[DEBUG-anim] tick(): No more active tweens, stopping loop`);
       this.stopLoop();
     }
   };

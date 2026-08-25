@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Element, Project, Scene } from "../model/types.js";
-import { ElementRenderer, resolveSrc } from "./ElementRenderer.js";
+import { ElementRenderer, resolveSrc, isVideoSrc } from "./ElementRenderer.js";
 import { runInteraction, type PlayerContext } from "../runtime/interactions.js";
 import { elementResolver, bindingHost, overrideHost } from "../data/ElementResolver.js";
 import { createTransitionController } from "../runtime/TransitionController.js";
@@ -11,6 +11,7 @@ import { AnimationRuntime } from "../runtime/AnimationRuntime.js";
 import { StateRuntime } from "../runtime/StateRuntime.js";
 import { decomposeValue } from "../runtime/PropertyRegistry.js";
 import { imageLoadQueue } from "../runtime/ImageLoadQueue.js";
+import { collectElementsWithDescendants } from "../data/elementTree.js";
 
 export interface PlayerProps {
   project: Project;
@@ -24,6 +25,21 @@ export interface PlayerProps {
   hideAudioIcons?: boolean;
   /** True when rendering in editor mode; disables button interaction overlays. */
   editorMode?: boolean;
+  /**
+   * Nearest ancestor "layer" id of the currently-selected element in the
+   * editor (null for the root/base layer). Scopes editor-only dimming of
+   * invisible elements to whichever layer the selection is in — see
+   * ElementRenderer's `editorDim`. Ignored outside editorMode.
+   */
+  activeLayerId?: string | null;
+  /**
+   * Ids of "layer" elements that should dim rather than fully hide while
+   * invisible — see ElementRenderer's `dimmableLayerIds`. Ignored outside
+   * editorMode.
+   */
+  dimmableLayerIds?: Set<string> | null;
+  /** Fired when a video element reports a DECODE/SRC_NOT_SUPPORTED playback error. */
+  onIncompatible?: (elementId: string, src: string) => void;
 }
 
 /**
@@ -37,7 +53,7 @@ interface SceneLayer {
   key: string;
 }
 
-export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false }: PlayerProps) {
+export function Player({ project, initialSceneId, assetBaseUrl, live = true, hideAudioIcons = false, editorMode = false, activeLayerId = null, dimmableLayerIds = null, onIncompatible }: PlayerProps) {
   // console.log('New player element created.')
   const firstSceneId =
     initialSceneId ?? project.startSceneId ?? project.scenes[0]?.id;
@@ -52,6 +68,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const keyCounterRef = useRef(0);
   const sessionId = useMemo(() => crypto.randomUUID(), []);
   const sceneEnterTimeRef = useRef<number>(0);
+  // Time the active scene state was entered (default state on scene navigation,
+  // or the target of the most recent setState action). Mirrors sceneEnterTimeRef.
+  const stateEnterTimeRef = useRef<number>(0);
 
   // Session lifecycle: emit sessionStart on mount, sessionEnd on unmount
   useEffect(() => {
@@ -66,6 +85,13 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       imageLoadQueue.clear(); // Clear queue on Player unmount (session end)
     };
   }, [project.dataConnectors, sessionId]);
+
+  // Keep AnalyticsStore's project reference fresh for CSV scene/element name
+  // resolution, independent of the session-lifecycle effect above (editor
+  // renames shouldn't require restarting the analytics session).
+  useEffect(() => {
+    analyticsStore.setProject(project);
+  }, [project]);
 
   // Sync initialSceneId prop changes (for Canvas scene switching)
   // Issue 1 fix: Removed sceneLayers from deps to prevent infinite loop
@@ -108,6 +134,10 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   const animationRuntime = useMemo(() => new AnimationRuntime(), []);
   const stateRuntime = useMemo(() => new StateRuntime(), []);
 
+  // Subscribe to element resolution (bindings + state + overrides + animations);
+  // re-render when they change. Hook must be called unconditionally (Rules of Hooks).
+  const resolveElement = elementResolver.useResolveElement();
+
   // Wire providers into ElementResolver (rendering pipeline)
   useEffect(() => {
     elementResolver.setStateProvider(stateRuntime);
@@ -115,22 +145,42 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     // Wire persist callback so animations can write final values to interaction override store
     animationRuntime.setPersistToOverrides((elementId, property, value) => {
-      console.log(`[DEBUG-anim] Persist callback invoked:`, { elementId, property, value });
-
       const decomposed = decomposeValue(property, value);
       for (const [field, val] of Object.entries(decomposed)) {
         overrideHost.setOverride(elementId, field, val);
       }
     });
 
+    // Wire media-scrub callback so scrubVideo can write currentTime directly
+    // onto the mounted <video> element (imperative DOM state, not a schema field —
+    // no override pipeline involvement, unlike property tweens above).
+    //
+    // Skip non-final writes while a seek is already decoding (`video.seeking`).
+    // Writing currentTime every rAF (~16ms) without waiting for the browser to
+    // finish the previous seek causes the decoder to fall behind and coalesce
+    // seeks: the picture freezes on the last decoded frame, then jumps once
+    // decoding catches up — visible as choppy jump-cuts rather than a smooth
+    // scrub. Waiting for `seeking` to clear bounds the update rate to what the
+    // decoder can actually keep up with. The final write (`force`) always
+    // applies regardless, so the scrub still lands exactly on `to`.
+    animationRuntime.setApplyMediaTime((elementId, time, force) => {
+      const video = videoElementsRef.current.get(elementId);
+      if (!video) return;
+      if (!force && video.seeking) return;
+      video.currentTime = time;
+    });
+
     return () => {
       elementResolver.setStateProvider(null);
       elementResolver.setAnimationProvider(null);
       animationRuntime.setPersistToOverrides(null);
+      animationRuntime.setApplyMediaTime(null);
     };
   }, [animationRuntime, stateRuntime]);
 
-  // Wire element lookup into AnimationRuntime (for resolving current values when from=undefined)
+  // Wire element lookup into AnimationRuntime (finds base schema element by id;
+  // AnimationRuntime resolves it through `resolveElement` to get the current
+  // rendered value — after bindings + state + interaction overrides — per ADR 0010).
   useEffect(() => {
     const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
     if (!activeScene) {
@@ -152,6 +202,11 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     animationRuntime.setElementLookup((id) => findElement(activeScene.elements, id));
   }, [sceneLayers, animationRuntime]);
+
+  useEffect(() => {
+    animationRuntime.setElementResolver(resolveElement);
+    return () => animationRuntime.setElementResolver(null);
+  }, [animationRuntime, resolveElement]);
 
   // Issue 6 fix: Extract transition execution to useCallback
   const executeTransition = useCallback(async (targetScene: Scene, newKey: string) => {
@@ -240,6 +295,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
       // Update scene tracking and emit sceneEnter
       sceneEnterTimeRef.current = Date.now();
+      stateEnterTimeRef.current = Date.now(); // Scene navigation resets to default state
       eventBus.setCurrentScene(targetScene.id);
       eventBus.emit({
         kind: "sceneEnter",
@@ -252,6 +308,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     // Update scene tracking and emit sceneEnter
     sceneEnterTimeRef.current = Date.now();
+    stateEnterTimeRef.current = Date.now(); // Scene navigation resets to default state
     eventBus.setCurrentScene(targetScene.id);
     eventBus.emit({
       kind: "sceneEnter",
@@ -289,7 +346,7 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
       goToSceneInternal(previousSceneId, false);
     },
       setProp: (elementId, key, value) => overrideHost.setOverride(elementId, key, value),
-      toggleVisibility: (elementId) => overrideHost.toggleOverride(elementId, "__hidden"),
+      toggleVisibility: (elementId) => overrideHost.toggleOverride(elementId, "visible"),
       playAudio: (elementId) => {
         const audio = audioElementsRef.current.get(elementId);
         if (audio) {
@@ -320,6 +377,16 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           console.warn(`[Player] seekVideo: video element ${elementId} not found`);
         }
       },
+      scrubVideo: async (elementId, from, to, duration, easing, delay) => {
+        const video = videoElementsRef.current.get(elementId);
+        if (!video) {
+          console.warn(`[Player] scrubVideo: video element ${elementId} not found`);
+          return;
+        }
+        video.pause();
+        const resolvedFrom = from ?? video.currentTime;
+        await animationRuntime.scrubMedia(elementId, resolvedFrom, to, duration, easing, delay);
+      },
       setVolume: (elementId, volume) => {
         const audio = audioElementsRef.current.get(elementId);
         const video = videoElementsRef.current.get(elementId);
@@ -342,35 +409,66 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
         }
       },
       animate: async (elementId, property, from, to, duration, easing, delay) => {
-        console.log(`[DEBUG-anim] PlayerContext.animate() wrapper called:`, {
-          elementId,
-          property,
-          from,
-          to,
-          duration,
-          easing,
-          delay,
-        });
-        const result = await animationRuntime.animate(elementId, property, from, to, duration, easing, delay);
-        console.log(`[DEBUG-anim] PlayerContext.animate() wrapper completed`);
-        return result;
+        return animationRuntime.animate(elementId, property, from, to, duration, easing, delay);
       },
-      // `duration` is unused until the animated fade path below is implemented.
-      setState: async (stateName, animated, _duration) => {
-        if (animated) {
-          // Fade out, swap state, fade in
-          const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
-          if (!activeScene) return;
-
-          // TODO: Implement fade transition (opacity tween on all elements)
-          // For v1, just instant swap
-          console.warn("[Player] setState animated transitions not yet implemented, falling back to instant");
-        }
-        // Pass scene ID to validate state applies to correct scene
+      setState: async (stateName, animated, duration) => {
         const sceneId = sceneLayers[sceneLayers.length - 1]?.scene.id;
-        stateRuntime.setState(stateName, sceneId);
+        const activeScene = sceneLayers[sceneLayers.length - 1]?.scene;
+        const fadeMs = (duration ?? 300) / 2;
+        let fadeElements: Element[] = [];
+        if (animated && activeScene) {
+          // Only fade elements actually overridden by the outgoing or incoming
+          // state (whole-scene fades are scene transitions' job, not this).
+          // A match on a layer/collection cascades to its descendants — the
+          // override toggles the whole layer's visibility/props, so anything
+          // nested inside it changes too even though only the layer itself is
+          // named in the state's override map.
+          const fromStateName = stateRuntime.getActiveState() ?? "default";
+          const fromIds = activeScene.states?.[fromStateName]?.elements ?? {};
+          const toIds = activeScene.states?.[stateName]?.elements ?? {};
+          const affectedIds = new Set([...Object.keys(fromIds), ...Object.keys(toIds)]);
+          fadeElements = collectElementsWithDescendants(activeScene.elements, (el) => affectedIds.has(el.id));
+          // Fade every affected element out first. transient=true so these tweens
+          // don't persist a permanent opacity override once they complete.
+          await Promise.all(
+            fadeElements.map((el) =>
+              animationRuntime.animate(el.id, "opacity", undefined, 0, fadeMs, "linear", 0, true)
+            )
+          );
+        }
+
+        if (stateRuntime.setState(stateName, sceneId)) {
+          // Emit stateExit for the state being left, before switching (so the
+          // auto-injected sceneState reflects the previous state). Mirrors
+          // sceneExit's duration tracking in goToScene.
+          if (stateEnterTimeRef.current > 0) {
+            const stateDuration = Date.now() - stateEnterTimeRef.current;
+            eventBus.emit({
+              kind: "stateExit",
+              payload: { sceneId, toState: stateName, duration: stateDuration }
+            });
+          }
+          eventBus.setActiveState(stateName);
+          stateEnterTimeRef.current = Date.now();
+        }
         // Wait for React to apply changes before continuing
         await new Promise(resolve => requestAnimationFrame(resolve));
+
+        if (animated && activeScene) {
+          // Fade back in to each element's actual resolved opacity under the
+          // new state (not assumed to be 1 — the new state may itself set opacity).
+          await Promise.all(
+            fadeElements.map((el) => {
+              const target = animationRuntime.resolveRestingValue(el.id, "opacity") as number;
+              return animationRuntime.animate(el.id, "opacity", 0, target, fadeMs, "linear", 0, true);
+            })
+          );
+          // Both halves of the fade are transient and hold their value on
+          // completion (see AnimationRuntime.animate) so the gap between
+          // fade-out and fade-in doesn't flicker. Release the fade-in's held
+          // value now that the chain is done, or it'd mask future changes.
+          fadeElements.forEach((el) => animationRuntime.clearTransientOverride(el.id, "opacity"));
+        }
       },
       project,
     };
@@ -433,15 +531,20 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
     const allElements = collectAllElements(scene.elements);
 
-    // Run enterScene interactions sequentially to avoid setState races
+    // Different elements' enterScene interactions run concurrently (matches
+    // tap/hover/press, where each element's handler is already independent).
+    // Each element's own interactions still run sequentially relative to
+    // each other, same as handleTap below.
     const runEnterSceneInteractions = async () => {
-      for (const element of allElements) {
-        for (const interaction of element.interactions) {
-          if (interaction.trigger === "enterScene") {
-            await runInteraction(interaction, ctx, element);
+      await Promise.all(
+        allElements.map(async (element) => {
+          for (const interaction of element.interactions) {
+            if (interaction.trigger === "enterScene") {
+              await runInteraction(interaction, ctx, element);
+            }
           }
-        }
-      }
+        })
+      );
     };
     runEnterSceneInteractions();
 
@@ -450,19 +553,9 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
 
   const handleTap = useCallback(
     async (element: Element) => {
-      console.log(`[DEBUG-anim] handleTap() called for element:`, {
-        elementId: element.id,
-        elementType: element.type,
-        interactionsCount: element.interactions.length,
-      });
       const tapInteractions = element.interactions.filter(i => i.trigger === "tap");
-      console.log(`[DEBUG-anim] Found ${tapInteractions.length} tap interactions`);
       // Run sequentially to avoid setState races
       for (const interaction of tapInteractions) {
-        console.log(`[DEBUG-anim] Running tap interaction:`, {
-          interactionId: interaction.id,
-          actionsCount: interaction.actions.length,
-        });
         await runInteraction(interaction, ctx, element);
       }
     },
@@ -518,15 +611,11 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
   );
 
   // Clear binding cache when project changes (BEFORE render uses it).
-  // useLayoutEffect runs synchronously after DOM mutations but before browser paint.
-  // This ensures cache clears before elements render with bindings.
-  useLayoutEffect(() => {
+  // Must happen during render, not in an effect (effects run after render,
+  // so this render would still read stale cached values — see CLAUDE.md).
+  useMemo(() => {
     bindingHost.clearCache();
   }, [project]);
-
-  // Subscribe to element resolution (bindings + overrides); re-render when they change.
-  // Hook must be called unconditionally (Rules of Hooks), even if live=false.
-  const resolveElement = elementResolver.useResolveElement();
 
   if (sceneLayers.length === 0) return <FatalMessage text="Project has no scenes." />;
 
@@ -620,10 +709,13 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
     // Issue 4 fix: Apply explicit fallback to prevent undefined backgrounds
     const background = scene.background || "#000000";
     const isColor = background.startsWith('#');
+    const isBgVideo = !isColor && isVideoSrc(background);
 
-    // Build background style
-    const backgroundStyle: React.CSSProperties = isColor
-      ? { background }
+    // Build background style. Video backgrounds are rendered as an actual
+    // <video> element below (CSS background-image can't autoplay video), so
+    // this just supplies a color fallback while the video loads.
+    const backgroundStyle: React.CSSProperties = isColor || isBgVideo
+      ? { background: isColor ? background : "#000000" }
       : {
           backgroundImage: `url(${resolveSrc(background, assetBaseUrl)})`,
           backgroundSize: scene.backgroundSize === 'fill' ? '100% 100%' : (scene.backgroundSize || 'cover'),
@@ -649,6 +741,24 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
           ...(isIncomingScene && { display: "none" }),
         }}
       >
+        {isBgVideo && (
+          <video
+            key={`${key}-bg-video`}
+            src={resolveSrc(background, assetBaseUrl)}
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: scene.backgroundSize === 'fill' ? 'fill' : (scene.backgroundSize || 'cover'),
+              objectPosition: scene.backgroundPosition || 'center',
+            }}
+          />
+        )}
         {/* Consolidated SVG defs for all layer masks in this scene */}
         {sceneMasks.length > 0 && (
           <svg
@@ -711,7 +821,10 @@ export function Player({ project, initialSceneId, assetBaseUrl, live = true, hid
                 playing
                 onAudioRef={onAudioRef}
                 onVideoRef={onVideoRef}
+                onIncompatible={onIncompatible}
                 editorMode={editorMode}
+                activeLayerId={activeLayerId}
+                dimmableLayerIds={dimmableLayerIds}
                 resolveElement={live ? resolveElement : undefined}
               />
             );

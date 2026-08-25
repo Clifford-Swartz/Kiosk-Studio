@@ -6,8 +6,15 @@ export default defineConfig({
   main: {
     // Don't externalize our workspace packages — they ship as raw TS (main
     // fields point at src/), so they must be bundled into the main process, not
-    // require()'d at runtime.
-    plugins: [externalizeDepsPlugin({ exclude: ["@kiosk/connectors", "@kiosk/engine", "@kiosk/pptx"] })],
+    // require()'d at runtime. Same reasoning for electron-store, ffmpeg-static,
+    // and ffprobe-static: pack.mjs stages out/ with no node_modules, so any
+    // externalized dep has nothing to require() from at runtime in the
+    // packaged app.
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ["@kiosk/connectors", "@kiosk/engine", "@kiosk/pptx", "electron-store", "ffmpeg-static", "ffprobe-static"],
+      }),
+    ],
     build: {
       lib: { entry: resolve(__dirname, "src/main/index.ts") },
     },

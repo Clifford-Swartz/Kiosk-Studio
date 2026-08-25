@@ -46,11 +46,14 @@ Target deployment: Portable app (zip with .exe + relative paths). No installer, 
 - File → "Choose image/video/audio" picker
 - Paste from clipboard
 - Drag-and-drop from filesystem
-- PPTX import images
 
 **To `assets/`** (project-specific):
 - Placeholders (copied from `resources/placeholders/` on New Project)
 - Bundled assets (copied from `user-content/` during Export)
+- PPTX import images — extracted directly from the deck's media parts, not
+  drawn from (or reusable via) the shared library, so they're written
+  straight into the importing project's `assets/` rather than deduplicated
+  into `user-content/`
 
 ### Export Behavior
 
@@ -131,3 +134,5 @@ type Project = {
 - See `packages/engine/src/model/schema.ts` for Project schema definition
 - See `apps/desktop/src/main/index.ts` for kioskasset:// protocol handler
 - See `apps/desktop/src/renderer/editor/assets.ts` for asset import logic
+- See `apps/desktop/src/renderer/editor/pptxImport.ts` for PPTX import, which
+  writes extracted images to `assets/` (see Asset Routing Rules above)

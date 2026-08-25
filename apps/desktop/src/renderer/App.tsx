@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Player, parseProject } from "@kiosk/engine";
+import { Player, parseProject, analyticsStore } from "@kiosk/engine";
 import { EditorShell } from "./editor/EditorShell.js";
 import { useEditor } from "./editor/store.js";
 import { projectAssetBase, getAppRootCached } from "./editor/assets.js";
 import { useLiveSession } from "./editor/liveSession.js";
 import { KioskRuntime } from "./kiosk/KioskRuntime.js";
-import { buildProjectFromDeck, type ParsedDeck } from "./editor/pptxImport.js";
+import { isParsedDeckWire } from "@kiosk/pptx";
+import { buildProjectFromDeck } from "./editor/pptxImport.js";
 
 type Mode = "editor" | "player" | "kiosk";
 
@@ -52,7 +53,8 @@ export function App() {
     w.__kioskTestMarkSaved = (path: string) => useEditor.getState().markSaved(path);
     w.__kioskParse = (raw: unknown) => parseProject(raw);
     w.__kioskBuildDeck = async (deck: unknown) => {
-      const built = await buildProjectFromDeck(deck as ParsedDeck);
+      if (!isParsedDeckWire(deck)) throw new Error("Test deck does not match ParsedDeckWire shape");
+      const built = await buildProjectFromDeck(deck);
       if (built) loadProject(parseProject(JSON.parse(JSON.stringify(built.project))), built.projectPath);
       return !!built;
     };
@@ -194,7 +196,8 @@ export function App() {
     try {
       const deck = await window.kiosk.importPptx();
       if (!deck) return;
-      const built = await buildProjectFromDeck(deck as ParsedDeck);
+      if (!isParsedDeckWire(deck)) throw new Error("PowerPoint import returned an unexpected format.");
+      const built = await buildProjectFromDeck(deck);
       if (!built) return; // user canceled the save-location prompt
       loadProject(parseProject(JSON.parse(JSON.stringify(built.project))), built.projectPath);
     } catch (err) {
@@ -216,7 +219,12 @@ export function App() {
     });
 
     if (launchedKiosk) {
-      // Launched via --kiosk: actually quit the kiosk.
+      // Launched via --kiosk: app.quit() below tears down the process, racing
+      // any in-flight/buffered analytics writes. Flush and wait before quitting
+      // so the last few minutes of events aren't lost on close.
+      if (validatedProject.project) {
+        await analyticsStore.flushAll(validatedProject.project.dataConnectors);
+      }
       void window.kiosk.exitKiosk();
       return;
     }
