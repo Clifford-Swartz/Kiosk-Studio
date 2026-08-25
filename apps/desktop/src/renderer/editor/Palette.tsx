@@ -10,6 +10,7 @@ const ITEMS: { type: ElementType; label: string; icon: string }[] = [
   { type: "audio", label: "Audio", icon: "🔊" },
   { type: "button", label: "Button", icon: "[ ]" },
   { type: "collection", label: "Collection", icon: "▦" },
+  { type: "html", label: "HTML", icon: "</>" },
 ];
 
 export function Palette() {

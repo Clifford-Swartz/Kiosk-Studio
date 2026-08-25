@@ -101,6 +101,13 @@ const TYPE_DEFAULTS: Record<
       dash: "solid",
     },
   },
+  html: {
+    width: 480,
+    height: 320,
+    props: {
+      html: '<div style="padding:16px;color:#fff;font-family:system-ui">Custom HTML</div>',
+    },
+  },
   collection: {
     width: 900,
     height: 520,

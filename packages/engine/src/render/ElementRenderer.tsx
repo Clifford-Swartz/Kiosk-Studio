@@ -264,6 +264,38 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
         </div>
       );
 
+    case "html": {
+      const html = str(props.html, "");
+      return (
+        <div
+          data-element-id={element.id}
+          style={{ ...baseStyle, overflow: "hidden" }}
+          onClick={handleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+        >
+          <iframe
+            srcDoc={html}
+            sandbox="allow-scripts"
+            title={element.name ?? "HTML content"}
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              // In the editor, the canvas-level hit-testing overlay owns
+              // select/drag for this element's bounding box — the iframe
+              // must not intercept pointer events itself, or it could
+              // swallow a drag. In the Player, it needs real pointer events
+              // so embedded buttons/links/forms work.
+              pointerEvents: editorMode ? "none" : "auto",
+            }}
+          />
+        </div>
+      );
+    }
+
     case "text": {
       // A binding targeting "text"/"label" can only write a plain string
       // (see ElementResolver.resolveBindings) — it never touches
@@ -1020,6 +1052,15 @@ function VideoElement({ element, assetBaseUrl, playing, onVideoRef, onIncompatib
       onVideoRef?.(element.id, null);
     };
   }, [element.id, onVideoRef, videoEl]);
+
+  // Apply props.playbackRate (the Properties panel "Speed" field, or a
+  // "Set property" interaction targeting it) to the actual element. Not a
+  // JSX-settable HTML attribute like autoplay/loop/muted, so it needs an
+  // imperative assignment — same as the runtime `setSpeed` interaction
+  // action does (Player.tsx), just driven by the prop instead of an event.
+  useEffect(() => {
+    if (videoEl) videoEl.playbackRate = num(props.playbackRate, 1);
+  }, [videoEl, props.playbackRate]);
 
   // Handle autoplay when playing prop changes
   useEffect(() => {

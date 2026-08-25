@@ -7,6 +7,7 @@ const TYPE_ICON: Record<string, string> = {
   image: "🖼",
   video: "▶",
   button: "⬭",
+  html: "</>",
 };
 
 /**

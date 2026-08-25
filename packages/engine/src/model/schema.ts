@@ -32,6 +32,7 @@ export const ElementTypeSchema = z.enum([
   "collection",
   "table",
   "line",
+  "html",
 ]);
 
 export const TriggerKindSchema = z.enum([

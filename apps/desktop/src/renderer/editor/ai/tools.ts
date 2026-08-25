@@ -17,6 +17,7 @@ const ELEMENT_TYPES: ElementType[] = [
   "button",
   "layer",
   "collection",
+  "html",
 ];
 
 export interface AiTool {

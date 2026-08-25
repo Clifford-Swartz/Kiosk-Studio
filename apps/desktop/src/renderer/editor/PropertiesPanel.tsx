@@ -249,6 +249,16 @@ function TypeFields({
           <Row label="Color"><Color value={str(p.color, "#ffffff")} onChange={(v) => set("color", v)} /></Row>
         </>
       );
+    case "html":
+      return (
+        <Row label="HTML Source">
+          <textarea
+            value={str(p.html)}
+            onChange={(e) => debouncedSet("html", e.target.value)}
+            style={{ ...input, minHeight: 160, fontFamily: "monospace", resize: "vertical" }}
+          />
+        </Row>
+      );
     case "rectangle":
       return (
         <>

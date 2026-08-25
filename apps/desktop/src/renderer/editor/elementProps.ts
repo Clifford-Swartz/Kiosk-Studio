@@ -61,6 +61,12 @@ export function getEditableProps(type: string): EditableProp[] {
         OPACITY_PROP,
         VISIBLE_PROP,
       ];
+    case "html":
+      return [
+        { key: "html", label: "HTML Source", valueType: "text" },
+        OPACITY_PROP,
+        VISIBLE_PROP,
+      ];
     default:
       return [OPACITY_PROP, VISIBLE_PROP];
   }
