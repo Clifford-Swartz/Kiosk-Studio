@@ -41,6 +41,42 @@ export function flattenElements(elements: Element[], options?: FlattenOptions): 
   return walk(elements, 0, 0);
 }
 
+/**
+ * Rank every element by the order it actually paints in, ascending (a higher
+ * rank paints on top). Keyed by element id.
+ *
+ * Each element renders as an absolutely positioned box carrying its own
+ * `zIndex` inside its *parent's* stacking context, so a descendant can never
+ * paint outside its container's slot: order is decided one level at a time
+ * (`zIndex`, then document order), and a container always paints below its own
+ * children. That makes an element's raw `zIndex` meaningless for comparing
+ * across containers — z=1 in a later layer still paints above z=73 in an
+ * earlier one.
+ *
+ * Anything that flattens the tree into a single stacking context needs this
+ * instead of the raw `zIndex` values. The editor canvas's hit layer is the
+ * motivating case: one transparent box per element, all siblings, so using raw
+ * `zIndex` made clicks pick elements that are painted underneath (or not
+ * painted at all).
+ */
+export function paintOrderRank(elements: Element[]): Map<string, number> {
+  const rank = new Map<string, number>();
+  let next = 0;
+  const walk = (els: Element[]): void => {
+    // Emit each element then its whole subtree before moving to the next
+    // sibling, so a later sibling outranks everything nested in an earlier one.
+    const ordered = els
+      .map((el, i) => ({ el, i }))
+      .sort((a, b) => (a.el.zIndex ?? 0) - (b.el.zIndex ?? 0) || a.i - b.i);
+    for (const { el } of ordered) {
+      rank.set(el.id, next++);
+      if (canHaveChildren(el)) walk(el.children!);
+    }
+  };
+  walk(elements);
+  return rank;
+}
+
 /** Find an element by id, relative coordinates (as stored in the schema). */
 export function findElement(elements: Element[], id: string): Element | null {
   for (const el of elements) {
