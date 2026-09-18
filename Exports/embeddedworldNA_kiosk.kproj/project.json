@@ -577,10 +577,10 @@
           "id": "el-e7229d36",
           "type": "button",
           "name": "CMSIS",
-          "x": 349,
-          "y": 694,
-          "width": 860,
-          "height": 847,
+          "x": 100,
+          "y": 859,
+          "width": 731.94,
+          "height": 620,
           "rotation": 0,
           "opacity": 0,
           "zIndex": 4,
@@ -617,10 +617,10 @@
           "id": "el-6796da2f",
           "type": "button",
           "name": "CMSIS",
-          "x": 1574,
-          "y": 783,
-          "width": 836,
-          "height": 793,
+          "x": 985.86,
+          "y": 859,
+          "width": 732.01,
+          "height": 620,
           "rotation": 0,
           "opacity": 0,
           "zIndex": 5,
@@ -657,10 +657,10 @@
           "id": "el-bf8d46c8",
           "type": "button",
           "name": "CMSIS",
-          "x": 2681,
-          "y": 751,
-          "width": 948,
-          "height": 836,
+          "x": 1871.79,
+          "y": 859,
+          "width": 970.3,
+          "height": 620,
           "rotation": 0,
           "opacity": 0,
           "zIndex": 6,
@@ -718,16 +718,16 @@
           "id": "el-ae3d170d",
           "type": "image",
           "name": "image2",
-          "x": 2681,
-          "y": 806,
-          "width": 1025,
-          "height": 685,
+          "x": 1871.79,
+          "y": 859,
+          "width": 970.3,
+          "height": 620,
           "rotation": 0,
           "opacity": 1,
           "zIndex": 10,
           "props": {
             "src": "user-content/MPLAB Code Configurator.png",
-            "fit": "fill",
+            "fit": "contain",
             "alt": ""
           },
           "bindings": [],
@@ -739,16 +739,16 @@
           "id": "image-a98eb9d1",
           "type": "image",
           "name": "image5",
-          "x": 349,
-          "y": 789,
-          "width": 725,
-          "height": 720,
+          "x": 100,
+          "y": 859,
+          "width": 731.94,
+          "height": 620,
           "rotation": 0,
           "opacity": 1,
           "zIndex": 11,
           "props": {
             "src": "user-content/MPLAB-DataVisualizer-WhiteBack.png",
-            "fit": "cover",
+            "fit": "contain",
             "alt": ""
           },
           "bindings": [],
@@ -760,20 +760,81 @@
           "id": "image-b2b47c00",
           "type": "image",
           "name": "image5",
-          "x": 1541,
-          "y": 789,
-          "width": 851,
-          "height": 752,
+          "x": 985.86,
+          "y": 859,
+          "width": 732.01,
+          "height": 620,
           "rotation": 0,
           "opacity": 1,
           "zIndex": 11,
           "props": {
             "src": "user-content/MPLAB-AI-Coding-Assistant-Outline (5).png",
-            "fit": "cover",
+            "fit": "contain",
             "alt": ""
           },
           "bindings": [],
           "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xccomp-img",
+          "type": "image",
+          "name": "XCCompilerLogo",
+          "x": 2996.01,
+          "y": 859,
+          "width": 744,
+          "height": 620,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 11,
+          "props": {
+            "src": "user-content/MPLAB XC COMPILER White Background.png",
+            "fit": "contain",
+            "alt": ""
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xccomp-btn",
+          "type": "button",
+          "name": "XC_COMPILER_BUTTON",
+          "x": 2996.01,
+          "y": 859,
+          "width": 744,
+          "height": 620,
+          "rotation": 0,
+          "opacity": 0,
+          "zIndex": 6,
+          "props": {
+            "label": "Button",
+            "fillType": "color",
+            "fill": "#ffffff",
+            "imageSrc": "__placeholder__",
+            "imageFit": "cover",
+            "color": "#ffffff",
+            "radius": 24,
+            "fontSize": 34.69
+          },
+          "bindings": [],
+          "interactions": [
+            {
+              "id": "int-xccomp",
+              "trigger": "tap",
+              "actions": [
+                {
+                  "id": "act-xccomp",
+                  "type": "goToScene",
+                  "params": {
+                    "sceneId": "scene-xccomp"
+                  }
+                }
+              ]
+            }
+          ],
           "locked": false,
           "visible": true
         }
@@ -4237,66 +4298,6 @@
               "visible": false
             },
             {
-              "id": "el-26393caf",
-              "type": "rectangle",
-              "name": "rectangle1",
-              "x": 220,
-              "y": 1620,
-              "width": 440,
-              "height": 440,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 2,
-              "props": {
-                "fill": "#103460",
-                "radius": 220
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-ce891cdf",
-              "type": "rectangle",
-              "name": "rectangle1",
-              "x": 220,
-              "y": 660,
-              "width": 440,
-              "height": 440,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 3,
-              "props": {
-                "fill": "#103460",
-                "radius": 220
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-00b4cdb2",
-              "type": "rectangle",
-              "name": "rectangle1",
-              "x": 220,
-              "y": 1140,
-              "width": 440,
-              "height": 440,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 4,
-              "props": {
-                "fill": "#103460",
-                "radius": 220
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
               "id": "el-8854fc2d",
               "type": "button",
               "name": "CMSIS_HOME_BUTTON",
@@ -4660,15 +4661,15 @@
               "type": "image",
               "name": "CMSISOverviewSlide",
               "x": 888,
-              "y": 227,
+              "y": 298.48,
               "width": 2856,
-              "height": 1707,
+              "height": 1564.05,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 17,
               "props": {
-                "src": "assets/cmsis-overview-slide.png",
-                "fit": "fill",
+                "src": "assets/cmsis-overview-slide-trimmed.png",
+                "fit": "contain",
                 "alt": "CMSIS: One Standard, Faster Embedded Development"
               },
               "bindings": [],
@@ -5321,6 +5322,361 @@
       ]
     },
     {
+      "id": "scene-xccomp",
+      "name": "XC Compiler",
+      "background": "assets/Converted-487452-1781883386-C81210-AdobeStock_815130771.jpg",
+      "transition": {
+        "type": "zoom",
+        "direction": "left",
+        "duration": 300,
+        "elementsOnly": true
+      },
+      "elements": [
+        {
+          "id": "el-glow-xccomp",
+          "type": "html",
+          "name": "BackgroundGlow",
+          "x": 0,
+          "y": 0,
+          "width": 3840,
+          "height": 2160,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 0,
+          "props": {
+            "html": "<!doctype html>\n<meta charset=\"utf-8\">\n<style>\n  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }\n  /* outer div carries the X animation, inner div the Y — see note above */\n  .orbit { position: absolute; will-change: transform; }\n  .orbit > div { width: 100%; height: 100%; border-radius: 50%; will-change: transform; }\n\n  /* travel: 2500px in 47s (53 canvas px/s) x 1500px in 31s */\n  .xa { left: -700px; top: -600px; width: 1700px; height: 1700px;\n    animation: xa 47s ease-in-out infinite alternate; }\n  .ya {\n    background: radial-gradient(circle closest-side, rgba(34,163,255,0.3), rgba(34,163,255,0) 71%);\n    animation: ya 31s ease-in-out infinite alternate;\n    /* quarter-period head start so Y is at full speed while X is turning */\n    animation-delay: -7.8s; }\n  @keyframes xa { from { transform: translate3d(0,0,0); } to { transform: translate3d(2500px,0,0); } }\n  @keyframes ya { from { transform: translate3d(0,0,0); } to { transform: translate3d(0,1500px,0); } }\n  /* travel: 2700px in 53s (51 canvas px/s) x 1600px in 37s */\n  .xb { left: 3000px; top: 1300px; width: 1500px; height: 1500px;\n    animation: xb 53s ease-in-out infinite alternate; }\n  .yb {\n    background: radial-gradient(circle closest-side, rgba(228,0,43,0.22), rgba(228,0,43,0) 71%);\n    animation: yb 37s ease-in-out infinite alternate;\n    /* quarter-period head start so Y is at full speed while X is turning */\n    animation-delay: -9.3s; }\n  @keyframes xb { from { transform: translate3d(0,0,0); } to { transform: translate3d(-2700px,0,0); } }\n  @keyframes yb { from { transform: translate3d(0,0,0); } to { transform: translate3d(0,-1600px,0); } }\n  /* travel: 2000px in 43s (47 canvas px/s) x 1500px in 29s */\n  .xc { left: 1200px; top: -500px; width: 1400px; height: 1400px;\n    animation: xc 43s ease-in-out infinite alternate; }\n  .yc {\n    background: radial-gradient(circle closest-side, rgba(0,214,190,0.2), rgba(0,214,190,0) 71%);\n    animation: yc 29s ease-in-out infinite alternate;\n    /* quarter-period head start so Y is at full speed while X is turning */\n    animation-delay: -7.3s; }\n  @keyframes xc { from { transform: translate3d(0,0,0); } to { transform: translate3d(2000px,0,0); } }\n  @keyframes yc { from { transform: translate3d(0,0,0); } to { transform: translate3d(0,1500px,0); } }\n  @media (prefers-reduced-motion: reduce) {\n    .orbit, .orbit > div { animation: none !important; }\n  }\n</style>\n<div class=\"orbit xa\"><div class=\"ya\"></div></div>\n<div class=\"orbit xb\"><div class=\"yb\"></div></div>\n<div class=\"orbit xc\"><div class=\"yc\"></div></div>\n"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": true,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-back",
+          "type": "button",
+          "name": "XC_BACK_BUTTON",
+          "x": 22,
+          "y": 6,
+          "width": 507,
+          "height": 452,
+          "rotation": 0,
+          "opacity": 0,
+          "zIndex": 1,
+          "props": {
+            "label": "Button",
+            "fillType": "color",
+            "fill": "#ffffff",
+            "imageSrc": "__placeholder__",
+            "imageFit": "cover",
+            "color": "#ffffff",
+            "radius": 24,
+            "fontSize": 43.37
+          },
+          "bindings": [],
+          "interactions": [
+            {
+              "id": "int-xcp-back",
+              "trigger": "tap",
+              "actions": [
+                {
+                  "id": "act-xcp-back",
+                  "type": "goToScene",
+                  "params": {
+                    "sceneId": "scene-17b058f3"
+                  }
+                }
+              ]
+            }
+          ],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-tile0",
+          "type": "rectangle",
+          "name": "Tile1",
+          "x": 811,
+          "y": 820,
+          "width": 686,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 4,
+          "props": {
+            "fill": "#f1f5f9",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-bar0",
+          "type": "rectangle",
+          "name": "Tile1Accent",
+          "x": 811,
+          "y": 820,
+          "width": 22,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 5,
+          "props": {
+            "fill": "#80B038",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-num0",
+          "type": "text",
+          "name": "Tile1Value",
+          "x": 883,
+          "y": 895,
+          "width": 592,
+          "height": 230,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "$0",
+            "color": "#4F7A14",
+            "fontSize": 190,
+            "align": "left",
+            "fontFamily": "Verdana, sans-serif",
+            "fontWeight": "bold"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-lbl0",
+          "type": "text",
+          "name": "Tile1Label",
+          "x": 883,
+          "y": 1135,
+          "width": 592,
+          "height": 130,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "license fee",
+            "color": "#1f2937",
+            "fontSize": 78,
+            "align": "left",
+            "fontFamily": "Helvetica, Arial, sans-serif"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-tile1",
+          "type": "rectangle",
+          "name": "Tile2",
+          "x": 1577,
+          "y": 820,
+          "width": 686,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 4,
+          "props": {
+            "fill": "#f1f5f9",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-bar1",
+          "type": "rectangle",
+          "name": "Tile2Accent",
+          "x": 1577,
+          "y": 820,
+          "width": 22,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 5,
+          "props": {
+            "fill": "#1547A0",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-num1",
+          "type": "text",
+          "name": "Tile2Value",
+          "x": 1649,
+          "y": 895,
+          "width": 592,
+          "height": 230,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "29%",
+            "color": "#1547A0",
+            "fontSize": 190,
+            "align": "left",
+            "fontFamily": "Verdana, sans-serif",
+            "fontWeight": "bold"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-lbl1",
+          "type": "text",
+          "name": "Tile2Label",
+          "x": 1649,
+          "y": 1135,
+          "width": 592,
+          "height": 130,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "denser code",
+            "color": "#1f2937",
+            "fontSize": 78,
+            "align": "left",
+            "fontFamily": "Helvetica, Arial, sans-serif"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-tile2",
+          "type": "rectangle",
+          "name": "Tile3",
+          "x": 2343,
+          "y": 820,
+          "width": 686,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 4,
+          "props": {
+            "fill": "#f1f5f9",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-bar2",
+          "type": "rectangle",
+          "name": "Tile3Accent",
+          "x": 2343,
+          "y": 820,
+          "width": 22,
+          "height": 520,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 5,
+          "props": {
+            "fill": "#e4002b",
+            "radius": 6
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-num2",
+          "type": "text",
+          "name": "Tile3Value",
+          "x": 2415,
+          "y": 895,
+          "width": 592,
+          "height": 230,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "30%",
+            "color": "#e4002b",
+            "fontSize": 190,
+            "align": "left",
+            "fontFamily": "Verdana, sans-serif",
+            "fontWeight": "bold"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-lbl2",
+          "type": "text",
+          "name": "Tile3Label",
+          "x": 2415,
+          "y": 1135,
+          "width": 592,
+          "height": 130,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 6,
+          "props": {
+            "text": "faster runtime",
+            "color": "#1f2937",
+            "fontSize": 78,
+            "align": "left",
+            "fontFamily": "Helvetica, Arial, sans-serif"
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        },
+        {
+          "id": "el-xcp-navlogo",
+          "type": "image",
+          "name": "XCCompilerLogoNav",
+          "x": 22,
+          "y": 6,
+          "width": 480,
+          "height": 400,
+          "rotation": 0,
+          "opacity": 1,
+          "zIndex": 8,
+          "props": {
+            "src": "user-content/MPLAB XC COMPILER White Background.png",
+            "fit": "contain",
+            "alt": ""
+          },
+          "bindings": [],
+          "interactions": [],
+          "locked": false,
+          "visible": true
+        }
+      ],
+      "states": {}
+    },
+    {
       "id": "scene-f073a7a4",
       "name": "Zephyr",
       "background": "assets/Converted-487452-1781883386-C81210-AdobeStock_815130771.jpg",
@@ -5371,10 +5727,10 @@
               "id": "el-46802c86",
               "type": "button",
               "name": "ZEPHYR_ZSDK_BUTTON",
-              "x": 345.17,
-              "y": 675.17,
-              "width": 409.66,
-              "height": 409.66,
+              "x": 300,
+              "y": 830,
+              "width": 500,
+              "height": 500,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 1,
@@ -5385,7 +5741,7 @@
                 "imageSrc": "__placeholder__",
                 "imageFit": "cover",
                 "color": "#ffffff",
-                "radius": 204.83,
+                "radius": 250,
                 "fontSize": 21.24
               },
               "bindings": [],
@@ -5413,10 +5769,10 @@
               "id": "el-f7bfab4c",
               "type": "button",
               "name": "ZEPHYR_BOARD_BUTTON",
-              "x": 344.41,
-              "y": 1635.17,
-              "width": 409.66,
-              "height": 409.66,
+              "x": 300,
+              "y": 1560,
+              "width": 500,
+              "height": 500,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 2,
@@ -5427,7 +5783,7 @@
                 "imageSrc": "__placeholder__",
                 "imageFit": "cover",
                 "color": "#ffffff",
-                "radius": 204.83,
+                "radius": 250,
                 "fontSize": 21.24
               },
               "bindings": [],
@@ -5452,55 +5808,13 @@
               "visible": true
             },
             {
-              "id": "el-a18c5333",
-              "type": "button",
-              "name": "ZEPHYR_MC_BUTTON",
-              "x": 344.41,
-              "y": 1155.17,
-              "width": 409.66,
-              "height": 409.66,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 3,
-              "props": {
-                "label": "Button",
-                "fillType": "color",
-                "fill": "#ffffff",
-                "imageSrc": "__placeholder__",
-                "imageFit": "cover",
-                "color": "#ffffff",
-                "radius": 204.83,
-                "fontSize": 21.24
-              },
-              "bindings": [],
-              "interactions": [
-                {
-                  "id": "int-4e4a335f",
-                  "trigger": "tap",
-                  "actions": [
-                    {
-                      "id": "act-3616d037",
-                      "type": "setState",
-                      "params": {
-                        "stateName": "ZephyrMicrochip",
-                        "animated": false,
-                        "duration": 300
-                      }
-                    }
-                  ]
-                }
-              ],
-              "locked": false,
-              "visible": true
-            },
-            {
               "id": "el-ca55cce3",
               "type": "image",
               "name": "Button1MCLogo",
-              "x": 388.41,
-              "y": 868.62,
-              "width": 308.76,
-              "height": 86.48,
+              "x": 352.78,
+              "y": 1066.11,
+              "width": 376.85,
+              "height": 105.55,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 4,
@@ -5518,10 +5832,10 @@
               "id": "el-a3bd0113",
               "type": "image",
               "name": "ZephyrLogo",
-              "x": 402.07,
-              "y": 1679.93,
-              "width": 295.1,
-              "height": 153.24,
+              "x": 370.38,
+              "y": 1614.63,
+              "width": 360.18,
+              "height": 187.03,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 5,
@@ -5539,10 +5853,10 @@
               "id": "image-4696e1db",
               "type": "image",
               "name": "Button1ZephyrLogo",
-              "x": 402.07,
-              "y": 719.93,
-              "width": 295.1,
-              "height": 153.24,
+              "x": 369.45,
+              "y": 884.63,
+              "width": 360.18,
+              "height": 187.03,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 6,
@@ -5557,62 +5871,20 @@
               "visible": true
             },
             {
-              "id": "el-11e135ae",
-              "type": "image",
-              "name": "ZephyrLogo",
-              "x": 402.07,
-              "y": 1199.93,
-              "width": 295.1,
-              "height": 153.24,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 7,
-              "props": {
-                "src": "assets/Converted-478889-1781884275-C81210-Zephyr_color-13.png",
-                "fit": "cover",
-                "alt": ""
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-8b64d07a",
-              "type": "image",
-              "name": "ZephyrLogo",
-              "x": 395.24,
-              "y": 1393.38,
-              "width": 308.76,
-              "height": 71.31,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 8,
-              "props": {
-                "src": "assets/Converted-134947-1781884390-C81210-Microchip-Logo-Horizontal-Black-Red.png",
-                "fit": "cover",
-                "alt": ""
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
               "id": "text-14478b08",
               "type": "text",
               "name": "BoardsText",
-              "x": 351.24,
-              "y": 1843.79,
-              "width": 396,
-              "height": 151.72,
+              "x": 308.34,
+              "y": 1814.63,
+              "width": 483.33,
+              "height": 185.18,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 9,
               "props": {
                 "text": "Supported Boards and Shields Search",
                 "color": "#000000",
-                "fontSize": 38.69,
+                "fontSize": 47.22,
                 "align": "center",
                 "fontWeight": "bold",
                 "fontFamily": "Helvetica, Arial, sans-serif",
@@ -5638,17 +5910,17 @@
               "id": "el-61abc5e4",
               "type": "text",
               "name": "zsdkText",
-              "x": 492.34,
-              "y": 941.45,
-              "width": 170.69,
-              "height": 86.48,
+              "x": 479.62,
+              "y": 1155,
+              "width": 208.33,
+              "height": 105.55,
               "rotation": 0,
               "opacity": 1,
               "zIndex": 10,
               "props": {
                 "text": "zSDK",
                 "color": "#000000",
-                "fontSize": 51.59,
+                "fontSize": 62.97,
                 "align": "center",
                 "fontWeight": "bold",
                 "fontFamily": "Helvetica, Arial, sans-serif",
@@ -5659,42 +5931,6 @@
                       "spans": [
                         {
                           "text": "zSDK"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-5038ffd0",
-              "type": "text",
-              "name": "forText",
-              "x": 496.9,
-              "y": 1341.03,
-              "width": 165.38,
-              "height": 93.31,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 11,
-              "props": {
-                "text": "for",
-                "color": "#2b2f35",
-                "fontSize": 51.59,
-                "align": "center",
-                "fontWeight": "bold",
-                "fontFamily": "Helvetica, Arial, sans-serif",
-                "content": {
-                  "version": 1,
-                  "paragraphs": [
-                    {
-                      "spans": [
-                        {
-                          "text": "for"
                         }
                       ]
                     }
@@ -6442,205 +6678,6 @@
           ]
         },
         {
-          "id": "layer-f4b658f6",
-          "type": "layer",
-          "name": "MicrochipLayer",
-          "x": 0,
-          "y": 0,
-          "width": 3840,
-          "height": 2160,
-          "rotation": 0,
-          "opacity": 1,
-          "zIndex": 3,
-          "props": {},
-          "bindings": [],
-          "interactions": [],
-          "locked": true,
-          "visible": false,
-          "children": [
-            {
-              "id": "collection-ede97c91",
-              "type": "collection",
-              "name": "collection1",
-              "x": 1450.38,
-              "y": 451.74,
-              "width": 1931.99,
-              "height": 1481.67,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 20,
-              "props": {
-                "layout": "carousel",
-                "fit": "fill",
-                "columns": 3,
-                "gap": 16.6,
-                "activeIndex": 0,
-                "intervalMs": 4000,
-                "itemBg": "#1e293b",
-                "titleColor": "#f8fafc",
-                "subtitleColor": "#94a3b8",
-                "showControls": false,
-                "items": [
-                  {
-                    "id": "i1",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-07-27 075110.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "i2",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-07-27 093126.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "i3",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-08-10 090752.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "ims3c7nmm",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-08-10 110924.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "ims3c7nr9",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-08-10 111040.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "imsnjsn5i",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-08-10 111136.png",
-                    "thumbnail": ""
-                  },
-                  {
-                    "id": "imsnjty7j",
-                    "title": "",
-                    "subtitle": "",
-                    "image": "assets/Screenshot 2026-08-10 111220.png",
-                    "thumbnail": ""
-                  }
-                ],
-                "advanceOnVideoEnd": false,
-                "videoLoop": false,
-                "videoMuted": true
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-d1e14179",
-              "type": "image",
-              "name": "image1",
-              "x": 2420.52,
-              "y": 212.06,
-              "width": 742.91,
-              "height": 173.28,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 28,
-              "props": {
-                "src": "assets/Converted-134947-1781884390-C81210-Microchip-Logo-Horizontal-Black-Red.png",
-                "fit": "cover",
-                "alt": ""
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-06c0a4a2",
-              "type": "image",
-              "name": "image2",
-              "x": 1767.88,
-              "y": 158.1,
-              "width": 500.12,
-              "height": 260.43,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 27,
-              "props": {
-                "src": "assets/Converted-478889-1781884275-C81210-Zephyr_color-13.png",
-                "fit": "cover",
-                "alt": ""
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-fb87fdaa",
-              "type": "text",
-              "name": "text1",
-              "x": 2214.04,
-              "y": 323.08,
-              "width": 226.19,
-              "height": 127.62,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 26,
-              "props": {
-                "text": "for",
-                "color": "#292d33",
-                "fontSize": 70.56,
-                "align": "center",
-                "fontWeight": "bold",
-                "fontFamily": "Verdana, sans-serif",
-                "content": {
-                  "version": 1,
-                  "paragraphs": [
-                    {
-                      "spans": [
-                        {
-                          "text": "for"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            },
-            {
-              "id": "el-4abca3ed",
-              "type": "rectangle",
-              "name": "rectangle6",
-              "x": 1446.23,
-              "y": 410.24,
-              "width": 1938.21,
-              "height": 59.14,
-              "rotation": 0,
-              "opacity": 1,
-              "zIndex": 25,
-              "props": {
-                "fill": "#103460",
-                "radius": 0
-              },
-              "bindings": [],
-              "interactions": [],
-              "locked": false,
-              "visible": true
-            }
-          ]
-        },
-        {
           "id": "layer-e5e5f815",
           "type": "layer",
           "name": "zSDK Layer",
@@ -6944,9 +6981,6 @@
       "states": {
         "ZephyrBoard": {
           "elements": {
-            "layer-f4b658f6": {
-              "visible": false
-            },
             "layer-e5e5f815": {
               "visible": false
             },
@@ -7042,105 +7076,8 @@
             }
           }
         },
-        "ZephyrMicrochip": {
-          "elements": {
-            "layer-f4b658f6": {
-              "visible": true
-            },
-            "layer-e5e5f815": {
-              "visible": false
-            },
-            "layer-95ef4518": {
-              "visible": false
-            },
-            "text-f0ce9315": {
-              "visible": false
-            },
-            "el-zov-pill": {
-              "visible": false
-            },
-            "el-zov-pilltext": {
-              "visible": false
-            },
-            "el-zov-mclogo": {
-              "visible": false
-            },
-            "el-zov-x": {
-              "visible": false
-            },
-            "el-zov-zlogo": {
-              "visible": false
-            },
-            "el-zov-sub": {
-              "visible": false
-            },
-            "el-zov-lede": {
-              "visible": false
-            },
-            "el-zov-card1": {
-              "visible": false
-            },
-            "el-zov-num1": {
-              "visible": false
-            },
-            "el-zov-rule1": {
-              "visible": false
-            },
-            "el-zov-title1": {
-              "visible": false
-            },
-            "el-zov-body1": {
-              "visible": false
-            },
-            "el-zov-card2": {
-              "visible": false
-            },
-            "el-zov-num2": {
-              "visible": false
-            },
-            "el-zov-rule2": {
-              "visible": false
-            },
-            "el-zov-title2": {
-              "visible": false
-            },
-            "el-zov-body2": {
-              "visible": false
-            },
-            "el-zov-card3": {
-              "visible": false
-            },
-            "el-zov-num3": {
-              "visible": false
-            },
-            "el-zov-rule3": {
-              "visible": false
-            },
-            "el-zov-title3": {
-              "visible": false
-            },
-            "el-zov-body3": {
-              "visible": false
-            },
-            "el-zov-band": {
-              "visible": false
-            },
-            "el-zov-bandtext": {
-              "visible": false
-            },
-            "el-zov-quote": {
-              "visible": false
-            },
-            "el-zov-footer": {
-              "visible": false
-            }
-          }
-        },
         "ZephyrzSDK": {
           "elements": {
-            "layer-f4b658f6": {
-              "visible": false
-            },
             "layer-e5e5f815": {
               "visible": true
             },
