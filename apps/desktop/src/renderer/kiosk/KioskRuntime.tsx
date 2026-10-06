@@ -5,7 +5,10 @@ import { projectAssetBase } from "../editor/assets.js";
 /**
  * Fullscreen kiosk runtime: renders the Player for a public touch screen.
  * - cursor hidden (revealed briefly on movement)
- * - idle "attract" reset: after N seconds of no input, return to the start scene
+ * - idle "attract" reset: after project.idleResetSeconds of no input, return to
+ *   the start scene. Off when missing/0. Deferred while a non-looping video is
+ *   playing (someone is watching it), and skipped if nobody has touched the
+ *   screen since the last reset (already home — don't restart its media).
  * - exit: press Esc (or call onExit) to leave
  * The Player already scales the scene to fit the window, so in a true-fullscreen
  * window it fills the screen edge-to-edge.
@@ -17,27 +20,44 @@ export function KioskRuntime({
   project,
   filePath,
   onExit,
-  idleResetMs = 60000,
 }: {
   project: Project;
   filePath: string | null;
   onExit: () => void;
-  idleResetMs?: number;
 }) {
+  const idleResetMs = (project.idleResetSeconds ?? 0) * 1000;
   const [cursorVisible, setCursorVisible] = useState(false);
   // Remount key forces the Player back to its start scene on idle reset.
   const [resetKey, setResetKey] = useState(0);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cursorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchedSinceReset = useRef(false);
 
   const armIdle = useCallback(() => {
     if (idleTimer.current) clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setResetKey((k) => k + 1), idleResetMs);
+    if (idleResetMs <= 0) return;
+    const onIdle = () => {
+      if (!touchedSinceReset.current) return;
+      // Video elements don't emit videoPause on unmount, so check the DOM
+      // directly rather than tracking playback through the EventBus. Looping
+      // videos are ambient (backgrounds), not something being watched.
+      const watching = Array.from(document.querySelectorAll("video")).some(
+        (v) => !v.paused && !v.ended && !v.loop
+      );
+      if (watching) {
+        idleTimer.current = setTimeout(onIdle, idleResetMs);
+        return;
+      }
+      touchedSinceReset.current = false;
+      setResetKey((k) => k + 1);
+    };
+    idleTimer.current = setTimeout(onIdle, idleResetMs);
   }, [idleResetMs]);
 
   useEffect(() => {
     armIdle();
-    const onActivity = () => {
+    const onActivity = (e: PointerEvent) => {
+      if (e.type === "pointerdown") touchedSinceReset.current = true;
       armIdle();
       // Briefly reveal the cursor on movement, then hide again.
       setCursorVisible(true);

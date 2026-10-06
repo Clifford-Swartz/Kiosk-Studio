@@ -378,6 +378,8 @@ export const ProjectSchema = z.object({
   enableBackButton: z.boolean().default(false),
   /** Enable home button in Play/Kiosk mode (project-level navigation UI). */
   enableHomeButton: z.boolean().default(false),
+  /** Kiosk mode: seconds of no touch before returning to the start scene. Missing or 0 = never. */
+  idleResetSeconds: z.number().min(0).optional(),
   /** Export marker: true = bundled with assets in project assets/, false/undefined = working project referencing shared user-content/. */
   exported: z.boolean().optional(),
 });

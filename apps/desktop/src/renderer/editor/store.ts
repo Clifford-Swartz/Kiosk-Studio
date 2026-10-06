@@ -168,6 +168,7 @@ export interface EditorState {
   // --- navigation settings ---
   setEnableBackButton: (enabled: boolean) => void;
   setEnableHomeButton: (enabled: boolean) => void;
+  setIdleResetSeconds: (seconds: number) => void;
 
   // --- data connectors & bindings (live data) ---
   addDataConnector: (kind: "rest" | "csv" | "json" | "jsonl" | "console") => string;
@@ -865,6 +866,12 @@ export const useEditor = create<EditorState>((set, get) => ({
   setEnableHomeButton: (enabled) =>
     set((state) => ({
       project: { ...state.project, enableHomeButton: enabled },
+      dirty: true,
+    })),
+
+  setIdleResetSeconds: (seconds) =>
+    set((state) => ({
+      project: { ...state.project, idleResetSeconds: seconds },
       dirty: true,
     })),
 
