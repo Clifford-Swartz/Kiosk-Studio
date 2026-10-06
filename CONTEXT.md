@@ -7,6 +7,8 @@ A kiosk experience. Contains Scenes, defines canvas size (one size for all scene
 
 **Storage model (2026-07):** Projects stored as `.kproj` folders in `<app-dir>/Exports/`. Each contains `project.json` + `assets/` subfolder. Assets reference shared `<app-dir>/user-content/` library (not per-project folders). Export action creates bundled sibling with `{name}-exported.kproj` suffix — copies user-content refs into bundled `assets/`, rewrites paths, sets `exported: true` flag. See ADR 0008.
 
+**Idle reset (2026-10):** `idleResetSeconds` (Kiosk mode only; missing/0 = never — default, since booth/presenter use is common) returns to the start scene after that long with no pointer input. Deferred while any non-looping video is playing; skipped if nobody has tapped since the last reset. Set via Navigation → "Return home when idle". Was previously a hard-coded 60s.
+
 ### Scene
 A screen in the kiosk experience. Contains Elements arranged on a canvas. Background can be a color, image, or video — video is extension-detected on the same `background` string field (no separate mediaType flag, same pattern as Collection media), always autoplays/loops/muted with no exposed playback controls (kiosk context = designed experience, not a general video player). See ADR 0012.
 

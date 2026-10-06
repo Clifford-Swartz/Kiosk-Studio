@@ -39,6 +39,26 @@ const checkbox: CSSProperties = {
   accentColor: "#38bdf8",
 };
 
+const idleSelect: CSSProperties = {
+  marginLeft: "auto",
+  background: "#1e293b",
+  color: "#cbd5e1",
+  border: "1px solid #334155",
+  borderRadius: 4,
+  fontSize: 12,
+  padding: "2px 4px",
+};
+
+const IDLE_RESET_OPTIONS = [
+  { seconds: 0, label: "Never" },
+  { seconds: 60, label: "1 min" },
+  { seconds: 120, label: "2 min" },
+  { seconds: 300, label: "5 min" },
+  { seconds: 600, label: "10 min" },
+  { seconds: 900, label: "15 min" },
+  { seconds: 1800, label: "30 min" },
+];
+
 const row: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -115,6 +135,7 @@ export function ProjectHierarchy() {
   const removeScene = useEditor((s) => s.removeScene);
   const setEnableBackButton = useEditor((s) => s.setEnableBackButton);
   const setEnableHomeButton = useEditor((s) => s.setEnableHomeButton);
+  const setIdleResetSeconds = useEditor((s) => s.setIdleResetSeconds);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -314,6 +335,21 @@ export function ProjectHierarchy() {
             style={checkbox}
           />
           <span>Enable Home Button</span>
+        </label>
+        <label style={checkboxLabel} title="Kiosk mode: return to the start scene after this long with no touch">
+          <span>Return home when idle</span>
+          <select
+            value={project.idleResetSeconds ?? 0}
+            onChange={(e) => setIdleResetSeconds(Number(e.target.value))}
+            style={idleSelect}
+          >
+            {IDLE_RESET_OPTIONS.map((o) => (
+              <option key={o.seconds} value={o.seconds}>{o.label}</option>
+            ))}
+            {!IDLE_RESET_OPTIONS.some((o) => o.seconds === (project.idleResetSeconds ?? 0)) && (
+              <option value={project.idleResetSeconds}>{project.idleResetSeconds}s</option>
+            )}
+          </select>
         </label>
       </div>
 
