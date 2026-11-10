@@ -353,7 +353,14 @@ export const ElementRenderer = React.memo(function ElementRenderer({ element, on
                   ...baseStyle,
                   objectFit: str(props.fit, "cover") as React.CSSProperties["objectFit"],
                   border,
-                  transition: isReady ? "opacity 0.2s ease-in" : "none",
+                  // Only arm the fade while the image is actually showing. `baseStyle`
+                  // carries `opacity: renderOpacity`, so leaving the transition on when
+                  // renderOpacity is 0 makes a hidden image ease out over 200ms — it
+                  // lingers into the next scene/state while texts and rectangles (which
+                  // have no transition) vanish on the first frame. With `none` in the
+                  // after-style no transition starts, so hiding is instant; appearing
+                  // still transitions exactly as before.
+                  transition: isReady && renderOpacity > 0 ? "opacity 0.2s ease-in" : "none",
                 }
           }
           onClick={crop ? undefined : handleClick}

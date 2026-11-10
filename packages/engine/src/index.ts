@@ -44,6 +44,7 @@ export {
   NESTABLE_TYPES,
   canHaveChildren,
   flattenElements,
+  paintOrderRank,
   findElement,
   findElementAbsolute,
   findParent,

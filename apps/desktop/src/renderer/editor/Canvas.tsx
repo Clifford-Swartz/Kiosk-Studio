@@ -4,6 +4,8 @@ import {
   isVideoSrc,
   Player,
   flattenElements,
+  paintOrderRank,
+  canHaveChildren,
   findElementAbsolute,
   findNearestLayerId,
   isLockedOrChildOfLocked,
@@ -246,6 +248,41 @@ export function Canvas({
     }
     return ids;
   }, [scene.elements, activeSelectionId]);
+
+  // The hit layer below flattens the tree into ONE stacking context, so an
+  // element's own zIndex can't order it against elements in other layers (z=1
+  // in a later layer paints above z=73 in an earlier one). Rank by real paint
+  // order instead, so a click picks whatever is drawn topmost at that point.
+  const paintRank = useMemo(() => paintOrderRank(scene.elements), [scene.elements]);
+
+  // Ids actually painted on the editor canvas. Mirrors ElementRenderer's
+  // editorMode renderOpacity (`visible ? opacity : (editorDim ? 0.4 : 0)`) and
+  // reuses the same activeLayerId/dimmableLayerIds inputs handed to <Player>,
+  // so hit-testing can't drift from what's on screen. An element painted at
+  // zero opacity must not swallow clicks meant for what IS painted beneath it;
+  // it stays reachable from the Scene Structure panel, and once selected it
+  // gets top hit priority below so it's still draggable/resizable.
+  const hittableIds = useMemo(() => {
+    const ids = new Set<string>();
+    const walk = (els: Element[], currentLayerId: string | null): void => {
+      for (const el of els) {
+        const visible = el.visible !== false;
+        const editorDim =
+          !visible &&
+          el.opacity > 0 &&
+          (el.type === "layer" ? dimmableLayerIds.has(el.id) : currentLayerId === activeLayerId);
+        // A container's opacity cascades, so an unpainted element hides its
+        // whole subtree — skip the descendants rather than just the element.
+        if ((visible ? el.opacity : editorDim ? 0.4 : 0) <= 0) continue;
+        ids.add(el.id);
+        if (canHaveChildren(el)) {
+          walk(el.children!, el.type === "layer" ? el.id : currentLayerId);
+        }
+      }
+    };
+    walk(scene.elements, null);
+    return ids;
+  }, [scene.elements, activeLayerId, dimmableLayerIds]);
 
   // Paste (Ctrl+V) an image from the clipboard -> add as an image element.
   useEffect(() => {
@@ -661,7 +698,9 @@ export function Canvas({
 
         {/* Interaction layer: one transparent box per element matching its real
             rect, so a click hits the element actually under the cursor (not the
-            topmost full-stage wrapper). zIndex mirrors draw order.
+            topmost full-stage wrapper). zIndex mirrors real paint order (see
+            paintRank) and unpainted elements opt out (see hittableIds), so
+            picking always agrees with what the visual layer above draws.
             Layers are excluded (not selectable on canvas), but their children are included. */}
         {flattenElements(scene.elements, { absoluteCoords: true })
           .filter((el) => el.type !== "layer")
@@ -695,13 +734,29 @@ export function Canvas({
               height: el.height,
               transform: `translate(${el.x}px, ${el.y}px) rotate(${el.rotation}deg)`,
               transformOrigin: "center center",
-              // Selected element gets mechanical priority (999999) to match visual priority
-              zIndex: selectedId === el.id ? 999999 : el.zIndex,
-              // Locked elements (or elements nested under a locked layer) and
-              // elements being text-edited get no pointer events, so clicks
-              // fall through to the selectable element underneath.
+              // Selected element gets mechanical priority (999999) to match visual
+              // priority, so it stays grabbable anywhere in its rect even where a
+              // higher layer covers it. Kept level with SelectionOverlay (which
+              // wins on DOM order) so the resize/rotate handles still take the
+              // click ahead of the element's own box. Multi-selected elements
+              // outrank everything unselected but stay ordered among themselves.
+              // Everything else uses real paint order, NOT its raw zIndex.
+              zIndex:
+                selectedId === el.id
+                  ? 999999
+                  : selectedIds.has(el.id)
+                    ? 900000 + (paintRank.get(el.id) ?? 0)
+                    : (paintRank.get(el.id) ?? 0),
+              // Locked elements (or elements nested under a locked layer),
+              // elements being text-edited, and elements not actually painted on
+              // the canvas get no pointer events, so clicks fall through to the
+              // selectable element underneath.
               pointerEvents:
-                editingId === el.id || isLockedOrChildOfLocked(scene.elements, el.id) ? "none" : "auto",
+                editingId === el.id ||
+                isLockedOrChildOfLocked(scene.elements, el.id) ||
+                !hittableIds.has(el.id)
+                  ? "none"
+                  : "auto",
               cursor: "move",
             }}
           />
