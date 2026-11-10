@@ -1,4 +1,5 @@
 import { useEditor } from "./store.js";
+import { UpdateButton } from "./UpdateButton.js";
 
 /**
  * Menu dropdown button. Click shows menu with options.
@@ -143,6 +144,8 @@ export function TopBar({ onPlay, onKiosk, onSave, onSaveAs, onOpen, onImportPptx
       >
         ⊡
       </button>
+
+      <UpdateButton />
     </div>
   );
 }

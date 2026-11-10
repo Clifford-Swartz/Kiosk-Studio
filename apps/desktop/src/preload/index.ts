@@ -11,6 +11,17 @@ interface MediaProbeResult {
   reason?: string;
 }
 
+/** Mirrors UpdateStatus in ../main/updater.ts (same reasoning as above). */
+export interface UpdateStatus {
+  state: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  percent: number | null;
+  error: string | null;
+  autoUpdate: boolean;
+  canInstall: boolean;
+}
+
 /**
  * The single, typed bridge between the sandboxed renderer and the Node main
  * process. Every privileged capability (file access, connectors later) is
@@ -129,6 +140,26 @@ const api = {
   hasAiKey: (): Promise<boolean> => ipcRenderer.invoke("ai:getKey"),
   /** Save the OpenAI API key (stored via electron-store in the main process). */
   setAiKey: (key: string): Promise<void> => ipcRenderer.invoke("ai:setKey", key),
+
+  // --- app updates ---
+  /** Current updater state (version, whether a newer release exists, etc.). */
+  getUpdateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke("update:status"),
+  /** Ask GitHub for the latest release now. */
+  checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke("update:check"),
+  /** Download the available update; progress arrives via onUpdateStatus. */
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke("update:download"),
+  /** Quit, install the downloaded update, and relaunch. */
+  installUpdate: (): Promise<void> => ipcRenderer.invoke("update:install"),
+  /** Turn background download + install-on-close on or off. */
+  setAutoUpdate: (on: boolean): Promise<UpdateStatus> => ipcRenderer.invoke("update:setAuto", on),
+  /** Open the release page in the default browser. */
+  openReleasePage: (): Promise<void> => ipcRenderer.invoke("update:openRelease"),
+  /** Subscribe to updater state changes; returns an unsubscribe. */
+  onUpdateStatus: (cb: (status: UpdateStatus) => void): (() => void) => {
+    const handler = (_e: unknown, status: UpdateStatus) => cb(status);
+    ipcRenderer.on("update:status", handler);
+    return () => ipcRenderer.removeListener("update:status", handler);
+  },
 };
 
 export type KioskApi = typeof api;

@@ -9,9 +9,10 @@ import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep }
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
 import { probeMedia, reencodeVideo as reencodeVideoFile, dedupeFilename, type MediaProbeResult } from "./mediaSupport.js";
+import { initUpdater } from "./updater.js";
 
 /** Local settings (API key, etc.) — not part of any saved project. */
-const settingsStore = new Store<{ openaiApiKey?: string }>({ name: "kiosk-settings" });
+const settingsStore = new Store<{ openaiApiKey?: string; autoUpdate?: boolean }>({ name: "kiosk-settings" });
 
 /**
  * Custom protocol for serving project assets. Using file:// directly fails in
@@ -1084,6 +1085,7 @@ app.whenReady().then(async () => {
   });
 
   createWindow();
+  initUpdater(settingsStore);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

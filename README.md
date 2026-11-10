@@ -66,6 +66,21 @@ Notes:
   `Documents/KioskStudio/`.
 - For a true kiosk deploy, make a shortcut to the exe with `--kiosk <path-to-project.json>`.
 
+### Publishing an update
+
+The app checks this repo's latest GitHub Release at launch (and every 6 hours) and
+offers it from the TopBar's update button. With **Update automatically** on, it downloads
+in the background and installs when the app closes. For a build to be found and installable:
+
+1. Bump `version` in `apps/desktop/package.json` — that is the version the app compares against.
+2. Package, zip the `Kiosk Studio-win32-x64` folder, and publish a release tagged `v<version>`
+   (e.g. `v0.10.0`). Drafts and pre-releases are ignored.
+3. The zip's filename must contain `win32-x64` and end in `.zip`
+   (e.g. `Kiosk-Studio-v0.10.0-win32-x64.zip`).
+
+Installing replaces the app's own files only; `Exports/`, `user-content/` and `analytics/`
+beside the exe are left alone. A log is written to `%AppData%\Kiosk Studio\update.log`.
+
 ## Verify
 
 ```bash

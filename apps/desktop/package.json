@@ -1,6 +1,6 @@
 {
   "name": "@kiosk/desktop",
-  "version": "0.0.1",
+  "version": "0.10.0",
   "private": true,
   "productName": "Kiosk Studio",
   "description": "Kiosk Studio — build and run interactive touch experiences.",
